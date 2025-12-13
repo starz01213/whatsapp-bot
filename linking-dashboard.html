@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Account Linking</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 900px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 30px;
+            margin: 0 auto 15px;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-icon {
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+        }
+
+        .qr-container {
+            background: #f8f9fa;
+            border: 2px dashed #667eea;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 300px;
+        }
+
+        #qrCodeCanvas {
+            max-width: 250px;
+            height: auto;
+            display: none;
+        }
+
+        .qr-loading {
+            text-align: center;
+            color: #666;
+        }
+
+        .qr-loading svg {
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .pin-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .status-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .instructions {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #555;
+            line-height: 1.6;
+        }
+
+        .instructions strong {
+            color: #333;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 20px 0;
+            color: #999;
+            font-size: 14px;
+            position: relative;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 35%;
+            height: 1px;
+            background: #e0e0e0;
+        }
+
+        .divider::before {
+            left: 0;
+        }
+
+        .divider::after {
+            right: 0;
+        }
+
+        .pin-display {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .pin-display p {
+            font-size: 13px;
+            margin-bottom: 10px;
+            opacity: 0.9;
+        }
+
+        .pin-number {
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+        }
+
+        .linked-accounts {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .linked-accounts h3 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .account-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #555;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .account-item .date {
+            color: #999;
+        }
+
+        .btn-unlink {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s ease;
+        }
+
+        .btn-unlink:hover {
+            background: #f5c6cb;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .container {
+                padding: 25px;
+            }
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        .copy-btn {
+            background: white;
+            color: #333;
+            border: 2px solid #ddd;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-left: 10px;
+        }
+
+        .copy-btn:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🔗</div>
+            <h1>WhatsApp Account Linking</h1>
+            <p>Secure authentication with QR code or 8-digit PIN</p>
+        </div>
+
+        <div id="statusMessage" class="status-message"></div>
+
+        <div class="content">
+            <!-- QR Code Section -->
+            <div class="section">
+                <h2>
+                    <span class="section-icon">1</span>
+                    Scan QR Code
+                </h2>
+                <div class="qr-container">
+                    <div id="qrLoading" class="qr-loading">
+                        <svg viewBox="0 0 50 50">
+                            <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="3"/>
+                        </svg>
+                        <p>Enter your phone number to generate QR code</p>
+                    </div>
+                    <canvas id="qrCodeCanvas"></canvas>
+                </div>
+                <div class="instructions">
+                    <strong>📱 How it works:</strong>
+                    <br>1. Enter your phone number below
+                    <br>2. A QR code will appear here
+                    <br>3. Scan with your WhatsApp device
+                    <br>4. Your account will be linked
+                </div>
+            </div>
+
+            <!-- PIN Entry Section -->
+            <div class="section">
+                <h2>
+                    <span class="section-icon">2</span>
+                    Enter PIN or Phone
+                </h2>
+                <div class="pin-form">
+                    <div class="form-group">
+                        <label for="phoneNumber">WhatsApp Phone Number</label>
+                        <input 
+                            type="tel" 
+                            id="phoneNumber" 
+                            placeholder="+1234567890 or 1234567890"
+                            autocomplete="tel"
+                        >
+                        <small style="color: #999;">Include country code (e.g., +1 for USA)</small>
+                    </div>
+
+                    <button class="btn btn-primary" id="generateBtn">
+                        <span>🔄</span>
+                        <span>Generate QR & PIN</span>
+                    </button>
+
+                    <div id="pinDisplay" style="display: none;">
+                        <div class="divider">OR</div>
+                        <div class="pin-display">
+                            <p>Your Verification PIN:</p>
+                            <div class="pin-number" id="pinValue">--------</div>
+                            <div class="session-info">
+                                Session: <code id="sessionId"></code>
+                                <button class="copy-btn" onclick="copyToClipboard(document.getElementById('pinValue').textContent)">📋 Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="verifySection" style="display: none;">
+                        <div class="form-group">
+                            <label for="pinInput">Enter 8-Digit PIN</label>
+                            <input 
+                                type="text" 
+                                id="pinInput" 
+                                placeholder="XXXXXXXX"
+                                maxlength="8"
+                                pattern="[0-9]{8}"
+                            >
+                            <small style="color: #999;">Check your WhatsApp for the PIN</small>
+                        </div>
+
+                        <button class="btn btn-primary" id="verifyBtn">
+                            <span>✓</span>
+                            <span>Verify & Link</span>
+                        </button>
+
+                        <button class="btn btn-secondary" id="resendBtn">
+                            <span>🔄</span>
+                            <span>Resend PIN</span>
+                        </button>
+                    </div>
+
+                    <div id="linkedSection" style="display: none;">
+                        <div class="status-message success">
+                            ✅ Account successfully linked!
+                        </div>
+                        <button class="btn btn-secondary" onclick="resetForm()">
+                            <span>🔄</span>
+                            <span>Link Another Account</span>
+                        </button>
+
+                        <div class="linked-accounts" id="linkedAccountsList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let currentSession = null;
+        let currentPhone = null;
+
+        // Copy to clipboard function
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('PIN copied to clipboard!');
+            });
+        }
+
+        // Reset form
+        function resetForm() {
+            document.getElementById('phoneNumber').value = '';
+            document.getElementById('pinInput').value = '';
+            document.getElementById('pinDisplay').style.display = 'none';
+            document.getElementById('verifySection').style.display = 'none';
+            document.getElementById('linkedSection').style.display = 'none';
+            document.getElementById('qrCodeCanvas').style.display = 'none';
+            document.getElementById('qrLoading').style.display = 'flex';
+            currentSession = null;
+            currentPhone = null;
+            hideStatus();
+        }
+
+        // Show status message
+        function showStatus(message, type = 'info') {
+            const el = document.getElementById('statusMessage');
+            el.textContent = message;
+            el.className = `status-message ${type}`;
+            setTimeout(() => {
+                el.style.display = 'block';
+            }, 100);
+        }
+
+        // Hide status message
+        function hideStatus() {
+            const el = document.getElementById('statusMessage');
+            el.style.display = 'none';
+        }
+
+        // Format phone number
+        function formatPhoneNumber(phone) {
+            // Remove all non-digit characters
+            let cleaned = phone.replace(/\D/g, '');
+            // Add + if not present
+            if (!phone.startsWith('+')) {
+                phone = '+' + cleaned;
+            }
+            return phone;
+        }
+
+        // Generate QR and PIN
+        document.getElementById('generateBtn').addEventListener('click', async () => {
+            const phone = document.getElementById('phoneNumber').value.trim();
+
+            if (!phone) {
+                showStatus('Please enter your phone number', 'error');
+                return;
+            }
+
+            const formattedPhone = formatPhoneNumber(phone);
+            
+            try {
+                document.getElementById('generateBtn').disabled = true;
+                showStatus('Generating QR code and PIN...', 'info');
+
+                const response = await fetch(`${API_BASE}/linking/initiate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ phoneNumber: formattedPhone })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate session');
+                }
+
+                const data = await response.json();
+                
+                currentSession = data.sessionId;
+                currentPhone = formattedPhone;
+
+                // Display QR Code
+                const canvas = document.getElementById('qrCodeCanvas');
+                canvas.src = data.qrCode;
+                canvas.style.display = 'block';
+                document.getElementById('qrLoading').style.display = 'none';
+
+                // Display PIN
+                document.getElementById('pinValue').textContent = data.pin;
+                document.getElementById('sessionId').textContent = data.sessionId;
+                document.getElementById('pinDisplay').style.display = 'block';
+                document.getElementById('verifySection').style.display = 'block';
+
+                showStatus('QR code and PIN generated! Check your WhatsApp for the PIN.', 'success');
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('generateBtn').disabled = false;
+            }
+        });
+
+        // Verify link
+        document.getElementById('verifyBtn').addEventListener('click', async () => {
+            const pin = document.getElementById('pinInput').value.trim();
+
+            if (!pin || pin.length !== 8) {
+                showStatus('Please enter a valid 8-digit PIN', 'error');
+                return;
+            }
+
+            if (!currentSession || !currentPhone) {
+                showStatus('Session not found. Please generate a new QR code.', 'error');
+                return;
+            }
+
+            try {
+                document.getElementById('verifyBtn').disabled = true;
+                showStatus('Verifying PIN...', 'info');
+
+                const response = await fetch(`${API_BASE}/linking/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionId: currentSession,
+                        pin: pin,
+                        phoneNumber: currentPhone
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Verification failed');
+                }
+
+                const data = await response.json();
+                
+                // Hide verify section and show success
+                document.getElementById('pinDisplay').style.display = 'none';
+                document.getElementById('verifySection').style.display = 'none';
+                document.getElementById('qrCodeCanvas').style.display = 'none';
+                document.getElementById('linkedSection').style.display = 'block';
+
+                showStatus('✅ Account linked successfully!', 'success');
+
+                // Load linked accounts
+                await loadLinkedAccounts();
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('verifyBtn').disabled = false;
+            }
+        });
+
+        // Resend PIN
+        document.getElementById('resendBtn').addEventListener('click', async () => {
+            if (!currentSession || !currentPhone) {
+                showStatus('Session not found', 'error');
+                return;
+            }
+
+            try {
+                document.getElementById('resendBtn').disabled = true;
+                showStatus('Resending PIN...', 'info');
+
+                const response = await fetch(`${API_BASE}/linking/resend-pin`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionId: currentSession,
+                        phoneNumber: currentPhone
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to resend PIN');
+                }
+
+                showStatus('PIN resent to your WhatsApp!', 'success');
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('resendBtn').disabled = false;
+            }
+        });
+
+        // Load linked accounts
+        async function loadLinkedAccounts() {
+            if (!currentPhone) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/linking/accounts/${encodeURIComponent(currentPhone)}`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+                const accounts = data.linkedAccounts || [];
+                const listEl = document.getElementById('linkedAccountsList');
+
+                if (accounts.length === 0) {
+                    listEl.innerHTML = '';
+                    return;
+                }
+
+                listEl.innerHTML = `<h3>Linked Accounts (${accounts.length})</h3>`;
+                accounts.forEach(account => {
+                    const date = new Date(account.linkedAt).toLocaleDateString();
+                    listEl.innerHTML += `
+                        <div class="account-item">
+                            <div>
+                                <strong>${account.sessionId.substring(0, 8)}...</strong>
+                                <span class="date">Linked: ${date}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+
+            } catch (error) {
+                console.error('Error loading linked accounts:', error);
+            }
+        }
+
+        // Allow Enter key in PIN input
+        document.getElementById('pinInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('verifyBtn').click();
+            }
+        });
+
+        // Allow Enter key in phone input
+        document.getElementById('phoneNumber').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('generateBtn').click();
+            }
+        });
+    </script>
+</body>
+</html>
