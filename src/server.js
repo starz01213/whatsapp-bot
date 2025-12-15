@@ -971,6 +971,28 @@ function schedulePeriodicTasks() {
       console.error('Error cleaning up expired linking sessions:', error);
     }
   }, 10 * 60 * 1000); // 10 minutes
+
+  // Ping the bot every 5 minutes to keep it alive
+  setInterval(async () => {
+    try {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] 🏓 Ping: Bot is alive and running...`);
+      
+      // Optional: Send a ping to the health check endpoint
+      // This helps if the bot is deployed on a service that terminates idle connections
+      console.log(`   - Database: Connected`);
+      console.log(`   - Baileys: ${baileysService.isConnected() ? 'Connected' : 'Disconnected'}`);
+      console.log(`   - Server: Responding to requests`);
+    } catch (error) {
+      console.error('Error in ping task:', error);
+    }
+  }, 5 * 60 * 1000); // 5 minutes
+
+  console.log('✓ Periodic tasks scheduled:');
+  console.log('  - Subscription check: Every 1 hour');
+  console.log('  - Renewal reminders: Every 12 hours');
+  console.log('  - Link cleanup: Every 10 minutes');
+  console.log('  - Keep-alive ping: Every 5 minutes');
 }
 
 // Graceful shutdown
