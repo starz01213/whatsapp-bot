@@ -1,3 +1,4 @@
+
 # WhatsApp Linking Bot - Feature Summary
 
 ## 🎯 What's New
@@ -9,7 +10,7 @@ Your WhatsApp Bot now includes a **complete account linking system** with QR cod
 ✅ **QR Code Authentication**
 - Generate unique QR codes for each linking session
 - Scan-to-link functionality
-- 5-minute expiration for security
+- 5-minute expiration  for security
 
 ✅ **8-Digit PIN System**
 - Alphanumeric PIN sent via WhatsApp

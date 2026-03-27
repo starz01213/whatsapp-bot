@@ -1,11 +1,11 @@
 {
   "name": "whatsapp-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp bot for bulk messaging, product queries, and auto-replies",
-  "main": "src/server.js",
+  "version": "2.0.0",
+  "description": "WhatsApp bot for bulk messaging, product queries, and auto-replies with Baileys integration",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "setup": "node scripts/setup.js",
     "setup-linking": "node setup-linking.js",
     "test-linking": "node test-linking.js"

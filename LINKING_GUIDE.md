@@ -18,7 +18,7 @@ This system provides a secure, user-friendly authentication mechanism for linkin
 
 ### 📱 User-Friendly Dashboard
 - Real-time QR code generation and display
-- PIN display and copy-to-clipboard functionality
+- PIN displa  y and copy-to-clipboard functionality
 - Account linking status tracking
 - Multiple account linking support
 - One-click account unlinking

@@ -8,7 +8,7 @@ class PaymentService {
   constructor() {
     // Your account details - OPay Transfer
     this.paymentAccount = {
-      accountNumber: '8144821073',
+      accountNumber: '',
       bankName: 'OPay',
       accountName: 'Igboneme Promise',
       paymentMethod: 'TRANSFER',
