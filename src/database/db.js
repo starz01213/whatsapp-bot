@@ -1,7 +1,15 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
 const dbPath = process.env.DB_PATH || './data/bot.db';
+
+// Ensure data directory exists
+const dataDir = path.dirname(dbPath);
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log(`✓ Created data directory: ${dataDir}`);
+}
 
 class Database {
   constructor() {
