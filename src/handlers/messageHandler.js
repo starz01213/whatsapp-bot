@@ -1,7 +1,7 @@
 const db = require('../database/db');
 const { UserService } = require('../database/services');
-const whatsappService = require('./whatsappService');
-const responseGenerator = require('./responseGenerator');
+const whatsappService = require('../services/whatsappService');
+const responseGenerator = require('../services/responseGenerator');
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
