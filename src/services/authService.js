@@ -13,6 +13,7 @@ class AuthService {
       '/api/updates',
       '/api/updates/*',
       '/qr-code',
+      '/reset-qr',
     ];
 
     // Validate password on startup
