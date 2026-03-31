@@ -67,6 +67,17 @@ class BaileysService {
 
     if (qr) {
       console.log('📱 Scan this QR code with your WhatsApp to connect:');
+      
+      // Also save QR code as image file
+      try {
+        const QRCode = require('qrcode');
+        const qrImagePath = path.join(process.cwd(), 'whatsapp-qr.png');
+        await QRCode.toFile(qrImagePath, qr);
+        console.log(`✅ QR Code saved to: ${qrImagePath}`);
+        console.log('📥 Download the QR code image and scan it with your WhatsApp!');
+      } catch (error) {
+        console.log('ℹ️  Could not save QR as image, use terminal QR code instead');
+      }
     }
 
     if (connection === 'close') {
