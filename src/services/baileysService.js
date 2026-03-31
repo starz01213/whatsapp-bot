@@ -11,6 +11,7 @@ class BaileysService {
     this.authDir = path.join(process.cwd(), 'auth_info');
     this.messageHandlers = [];
     this.logger = pino({ level: 'error' });
+    this.latestQRCode = null; // Store latest QR code data
   }
 
   /**
@@ -67,6 +68,7 @@ class BaileysService {
 
     if (qr) {
       console.log('📱 Scan this QR code with your WhatsApp to connect:');
+      this.latestQRCode = qr; // Store QR code data
       
       // Also save QR code as image file
       try {
@@ -74,9 +76,9 @@ class BaileysService {
         const qrImagePath = path.join(process.cwd(), 'whatsapp-qr.png');
         await QRCode.toFile(qrImagePath, qr);
         console.log(`✅ QR Code saved to: ${qrImagePath}`);
-        console.log('📥 Download the QR code image and scan it with your WhatsApp!');
+        console.log('📥 Visit: https://whatsapp-bot-sdwb.onrender.com/qr-code in your browser!');
       } catch (error) {
-        console.log('ℹ️  Could not save QR as image, use terminal QR code instead');
+        console.log('ℹ️  Could not save QR as image, use /qr-code endpoint instead');
       }
     }
 
@@ -243,6 +245,13 @@ class BaileysService {
     } catch (error) {
       console.error('Error disconnecting Baileys:', error);
     }
+  }
+
+  /**
+   * Get latest QR code
+   */
+  getLatestQRCode() {
+    return this.latestQRCode;
   }
 }
 

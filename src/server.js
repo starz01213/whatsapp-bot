@@ -76,6 +76,131 @@ app.get('/health', (req, res) => {
   });
 });
 
+/**
+ * Get WhatsApp QR Code for scanning
+ */
+app.get('/qr-code', (req, res) => {
+  try {
+    const qrCodeData = baileysService.getLatestQRCode();
+    
+    if (!qrCodeData) {
+      return res.status(503).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>WhatsApp Bot - QR Code</title>
+          <style>
+            body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+            .container { text-align: center; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #25D366; }
+            p { color: #666; font-size: 16px; }
+            .loading { color: #25D366; font-size: 14px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>🔄 WhatsApp Bot</h1>
+            <p>QR Code is loading...</p>
+            <p class="loading">Please wait a moment and refresh this page in a few seconds.</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Generate QR code as PNG image
+    const QRCode = require('qrcode');
+    QRCode.toDataURL(qrCodeData, { width: 400, margin: 2 }, (err, dataURL) => {
+      if (err) {
+        return res.status(500).send('Error generating QR code');
+      }
+
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>WhatsApp Bot - QR Code</title>
+          <style>
+            body { 
+              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+              display: flex; 
+              justify-content: center; 
+              align-items: center; 
+              height: 100vh; 
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              margin: 0;
+            }
+            .container { 
+              text-align: center; 
+              background: white; 
+              padding: 40px; 
+              border-radius: 15px; 
+              box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            }
+            h1 { 
+              color: #25D366; 
+              margin: 0 0 10px 0;
+              font-size: 28px;
+            }
+            .subtitle {
+              color: #666;
+              margin-bottom: 30px;
+              font-size: 14px;
+            }
+            img { 
+              border: 3px solid #25D366; 
+              border-radius: 10px;
+              max-width: 400px;
+              width: 100%;
+            }
+            .instructions {
+              margin-top: 30px;
+              text-align: left;
+              background: #f9f9f9;
+              padding: 20px;
+              border-radius: 8px;
+              font-size: 14px;
+              color: #333;
+            }
+            .instructions h3 {
+              margin-top: 0;
+              color: #25D366;
+            }
+            .instructions ol {
+              margin: 10px 0;
+              padding-left: 20px;
+            }
+            .instructions li {
+              margin: 8px 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>📱 WhatsApp Connection QR Code</h1>
+            <p class="subtitle">Scan this code with your WhatsApp phone to connect the bot</p>
+            <img src="${dataURL}" alt="WhatsApp QR Code">
+            <div class="instructions">
+              <h3>How to Scan:</h3>
+              <ol>
+                <li>Open WhatsApp on your phone</li>
+                <li>Go to Settings → Linked Devices</li>
+                <li>Tap "Link a device"</li>
+                <li>Point your phone camera at the QR code above</li>
+                <li>Wait for confirmation</li>
+              </ol>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+    });
+  } catch (error) {
+    console.error('Error serving QR code:', error);
+    res.status(500).json({ error: 'Error generating QR code' });
+  }
+});
+
 // ============ COMMODITY MANAGEMENT ENDPOINTS ============
 
 /**
