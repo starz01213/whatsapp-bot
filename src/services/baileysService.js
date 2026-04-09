@@ -62,7 +62,7 @@ class BaileysService {
       console.log('########################################'.repeat(3) + '\n');
       
       // We use the 'large' version so it doesn't compress and disappear in Render
-      qrcodeTerminal.generate(qr, { small: false });
+      qrcodeTerminal.generate(qr, { small: true });
       
       console.log('\n' + '########################################'.repeat(3) + '\n\n');
     }
