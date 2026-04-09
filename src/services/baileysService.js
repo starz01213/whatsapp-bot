@@ -3,7 +3,6 @@ const { useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/bai
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs').promises;
-const qrcodeTerminal = require('qrcode-terminal');
 const axios = require('axios');
 
 class BaileysService {
@@ -12,16 +11,16 @@ class BaileysService {
     this.authDir = path.join(process.cwd(), 'auth_info');
     this.messageHandlers = [];
     this.logger = pino({ level: 'error' });
-    this.latestQRCode = null;
   }
 
-  // This is the function server.js is looking for!
   onMessage(callback) {
     this.messageHandlers.push(callback);
   }
+
   isConnected() {
     return this.sock && this.sock.user;
   }
+
   async initialize() {
     try {
       console.log('🔄 Initializing Baileys...');
@@ -33,7 +32,7 @@ class BaileysService {
 
       this.sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
+        printQRInTerminal: false, // We are using Pairing Code instead
         logger: this.logger,
         browser: ['WhatsApp Bot', 'Chrome', '120.0'],
         syncFullHistory: false,
@@ -51,26 +50,30 @@ class BaileysService {
     }
   }
 
- async handleConnectionUpdate(update) {
+  async handleConnectionUpdate(update) {
     const { connection, lastDisconnect, qr } = update;
 
-    if (qr) {
-      this.latestQRCode = qr;
-      // We are adding a massive visual border to help you spot it
-      console.log('\n\n' + '########################################'.repeat(3));
-      console.log('      🚨 SCAN THIS QR CODE NOW 🚨      ');
-      console.log('########################################'.repeat(3) + '\n');
-      
-      // We use the 'large' version so it doesn't compress and disappear in Render
-      qrcodeTerminal.generate(qr, { small: true });
-      
-      console.log('\n' + '########################################'.repeat(3) + '\n\n');
+    // --- PAIRING CODE LOGIC ---
+    if (qr && !this.sock.authState.creds.registered) {
+      try {
+        // IMPORTANT: Change this to your actual WhatsApp number (International format, no +)
+        const phoneNumber = "2348144821073"; 
+        
+        const code = await this.sock.requestPairingCode(phoneNumber);
+        
+        console.log('\n' + '═'.repeat(40));
+        console.log('🔗 YOUR WHATSAPP PAIRING CODE:');
+        console.log(`👉    ${code}    👈`);
+        console.log('═'.repeat(40));
+        console.log('How to use: WhatsApp > Linked Devices > Link with phone number instead\n');
+      } catch (err) {
+        console.error('Error getting pairing code:', err);
+      }
     }
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect.error)?.output?.statusCode;
       if (statusCode !== DisconnectReason.loggedOut) {
-        // We are increasing this to 15 seconds to give the terminal a break
         console.log('🔄 Connection paused. Waiting 15 seconds before retry...');
         setTimeout(() => this.initialize(), 15000);
       } else {
@@ -142,5 +145,4 @@ class BaileysService {
   }
 }
 
-// Ensure we are exporting a new instance of the class
 module.exports = new BaileysService();
