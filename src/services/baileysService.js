@@ -3,7 +3,7 @@ const { useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/bai
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs').promises;
-const QRCodeTerminal = require('qrcode-terminal'); // For terminal printing
+const qrCodeterminal = require('qrcode-terminal'); // For terminal printing
 
 class BaileysService {
   constructor() {
@@ -55,7 +55,7 @@ class BaileysService {
       console.log('Scan this in your Render logs to connect:');
       
       // This prints the actual QR code to your Render Terminal
-      QRCodeTerminal.generate(qr, { small: true });
+      qrCodeterminal.generate(qr, { small: true });
       
       console.log('='.repeat(40) + '\n');
     }
