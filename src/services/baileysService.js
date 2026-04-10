@@ -5,6 +5,9 @@ const path = require('path');
 const fs = require('fs').promises;
 const axios = require('axios');
 
+// Import telegram service so we can send the code to your chat
+const telegramService = require('../../telegramService');
+
 class BaileysService {
   constructor() {
     this.latestPairingCode = null;
@@ -22,7 +25,7 @@ class BaileysService {
     return this.sock && this.sock.user;
   }
 
- async initialize() {
+  async initialize() {
     try {
       console.log('🔄 Initializing Baileys...');
       try { await fs.mkdir(this.authDir, { recursive: true }); } catch (e) {}
@@ -33,9 +36,9 @@ class BaileysService {
         auth: state,
         printQRInTerminal: false,
         logger: this.logger,
-        browser: ["Ubuntu", "Chrome", "20.0.04"], // Standard browser string
+        browser: ["Ubuntu", "Chrome", "20.0.04"], 
         syncFullHistory: false,
-        connectTimeoutMs: 60000, // Give it 60 seconds to connect
+        connectTimeoutMs: 60000, 
         defaultQueryTimeoutMs: 0,
       });
 
@@ -60,9 +63,14 @@ class BaileysService {
       try {
         const code = await this.sock.requestPairingCode("2348144821073");
         this.latestPairingCode = code;
+        
         console.log('\n' + '⭐'.repeat(20));
         console.log(`🚀 YOUR CODE IS: ${code}`);
         console.log('⭐'.repeat(20) + '\n');
+
+        // NEW: This sends the code directly to your Telegram bot!
+        await telegramService.sendCode(code);
+        
       } catch (err) {
         console.log('⚠️ Pairing request failed, retrying in next cycle...');
       }
@@ -77,7 +85,6 @@ class BaileysService {
     } else if (connection === 'open') {
       console.log('✅ SUCCESS! WhatsApp is connected.');
     }
-  
   }
 
   async handleIncomingMessage(message) {
