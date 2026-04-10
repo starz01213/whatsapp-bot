@@ -18,9 +18,11 @@ const analyticsService = require('./services/analyticsService');
 const reportingService = require('./services/reportingService');
 const i18nService = require('./services/i18nService');
 const baileysService = require('./services/baileysService');
+const telegramService = require('./telegramService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
 
 // ============ MIDDLEWARE ============
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -122,6 +124,7 @@ app.post('/api/bulk-message', async (req, res) => {
 async function startServer() {
   try {
     await db.connect();
+    console.log('✓ Telegram Command Center Active');
     console.log('✓ Database connected');
 
     await baileysService.initialize();
@@ -150,3 +153,12 @@ baileysService.onMessage(async (messageData) => {
 startServer();
 
 module.exports = app;
+// Listen for the signal from Telegram and get the code from WhatsApp
+process.on('REQUEST_PAIRING_CODE', async (phoneNumber) => {
+  try {
+    const code = await baileysService.sock.requestPairingCode(phoneNumber);
+    await telegramService.sendCode(code);
+  } catch (err) {
+    console.error("Pairing Error:", err);
+  }
+});
