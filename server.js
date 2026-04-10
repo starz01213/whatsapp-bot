@@ -160,24 +160,21 @@ startServer();
 
 module.exports = app;
 
-// ============ 📡 THE SIGNAL LISTENER (ADD THIS!) ============
-// This listens for the /link command from Telegram
-process.on('REQUEST_PAIRING_CODE', async (phoneNumber) => {
+process.on('REQUEST_QR_SCAN', async () => {
   try {
-    console.log(`📡 Signal received! Requesting code for: ${phoneNumber}`);
-    
-    // 1. Tell the WhatsApp service to get a code
-    const code = await baileysService.sock.requestPairingCode(phoneNumber);
-    
-    // 2. Save it so the webpage /get-my-code can see it
-    baileysService.latestPairingCode = code;
-    
-    console.log(`✅ Code generated: ${code}`);
-    
-    // 3. Send the code back to your Telegram bot
-    await telegramService.sendCode(code);
-    
+    console.log("📡 Generating QR Code for Telegram...");
+    const qrData = baileysService.getLatestQRCode(); // Get the raw QR string
+
+    if (qrData) {
+      // Convert the string into an actual image buffer
+      const qrBuffer = await QRCode.toBuffer(qrData);
+      // Send that buffer to the Telegram service
+      await telegramService.sendQR(qrBuffer);
+      console.log("✅ QR Code sent to Telegram!");
+    } else {
+      console.log("⏳ QR not ready yet. Try again in 5 seconds.");
+    }
   } catch (err) {
-    console.error("❌ Pairing Error:", err);
+    console.error("❌ QR Telegram Error:", err);
   }
 });
