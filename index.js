@@ -1,230 +1,102 @@
-#!/usr/bin/env node
+const { Bot, InlineKeyboard, InputFile } = require('grammy');
 
-/**
- * WhatsApp Bot Integration - Main Entry Point
- * 
- * This is the primary entry point for the WhatsApp integration system.
- * It initializes the server and all necessary services for handling
- * WhatsApp messages, payments, linking, analytics, and more.
- */
+const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const path = require('path');
+// --- MENU DEFINITIONS ---
 
-// Import core services and handlers
-const db = require('./src/database/db');
-const messageHandler = require('./src/handlers/messageHandler');
-const linkingHandler = require('./src/handlers/linkingHandler');
-const paymentHandler = require('./src/handlers/paymentHandler');
-const { BulkMessagingService } = require('./src/handlers/bulkMessagingHandler');
+const mainMenu = new InlineKeyboard()
+  .text("Link WhatsApp", "link_wa")
+  .text("Status", "check_status")
+  .row()
+  .text("Settings", "settings");
 
-// Import services
-const authService = require('./src/services/authService');
-const baileysService = require('./src/services/baileysService');
-const analyticsService = require('./src/services/analyticsService');
-const reportingService = require('./src/services/reportingService');
-const subscriptionService = require('./src/services/subscriptionService');
-const linkingService = require('./src/services/linkingService');
-const paymentService = require('./src/services/paymentService');
+const codeOptionMenu = new InlineKeyboard()
+  .text("Use 8-Digit Code Instead", "request_pairing_code");
 
-// Initialize Express app
-const app = express();
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || 'localhost';
+const qrOptionMenu = new InlineKeyboard()
+  .text("Try QR Code Instead", "restart_connection");
 
-// ============ MIDDLEWARE SETUP ============
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
-app.use(cors());
-app.use(express.static(path.join(__dirname, 'public')));
+// --- COMMANDS ---
 
-// Authentication middleware
-app.use(authService.adminAuthMiddleware());
-
-// ============ BAILEYS INTEGRATION ============
-baileysService.onMessage(async (messageData) => {
-  try {
-    const body = {
-      From: `whatsapp:${messageData.from}`,
-      Body: messageData.body,
-      NumMedia: 0,
-      ProfileName: messageData.from,
-    };
-    await messageHandler.handleIncomingMessage(body);
-  } catch (error) {
-    console.error('Baileys message processing error:', error);
-  }
-});
-
-// ============ WEBHOOK ENDPOINTS ============
-
-// Health check
-app.get('/', (req, res) => {
-  res.json({
-    status: 'WhatsApp Bot Running',
-    timestamp: new Date(),
-    version: '2.0',
-  });
-});
-// New route to see your Pairing Code on a webpage
-app.get('/get-my-code', (req, res) => {
-  if (baileysService.latestPairingCode) {
-    res.send(`
-      <div style="font-family: sans-serif; text-align: center; padding: 50px;">
-        <h1>🚀 YOUR PAIRING CODE</h1>
-        <div style="font-size: 50px; font-weight: bold; background: #f0f0f0; display: inline-block; padding: 20px; border-radius: 10px; border: 2px solid #25D366;">
-          ${baileysService.latestPairingCode}
-        </div>
-        <p style="margin-top: 20px;">Type this into your phone in the "Link with phone number" section.</p>
-        <button onclick="window.location.reload()" style="padding: 10px 20px; cursor: pointer;">Refresh Code</button>
-      </div>
-    `);
-  } else {
-    res.send(`
-      <div style="font-family: sans-serif; text-align: center; padding: 50px;">
-        <h1>⏳ No code generated yet</h1>
-        <p>1. Open WhatsApp on your phone.</p>
-        <p>2. Go to Linked Devices > Link with phone number.</p>
-        <p>3. Enter your number (2348144821073).</p>
-        <p>4. <b>Then refresh this page.</b></p>
-        <button onclick="window.location.reload()" style="padding: 10px 20px; cursor: pointer;">Check Again</button>
-      </div>
-    `);
-  }
-});
-
-// Message webhook endpoint
-app.post('/webhook/messages', async (req, res) => {
-  try {
-    await messageHandler.handleIncomingMessage(req.body);
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Webhook message error:', error);
-    res.status(500).json({ error: 'Failed to process message' });
-  }
-});
-
-// Linking webhook endpoint
-app.post('/webhook/linking', async (req, res) => {
-  try {
-    await linkingHandler.handleLinkingRequest(req.body);
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Linking webhook error:', error);
-    res.status(500).json({ error: 'Failed to process linking' });
-  }
-});
-
-// Payment webhook endpoint
-app.post('/webhook/payment', async (req, res) => {
-  try {
-    await paymentHandler.handlePaymentNotification(req.body);
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Payment webhook error:', error);
-    res.status(500).json({ error: 'Failed to process payment' });
-  }
-});
-
-// Bulk messaging endpoint
-app.post('/api/bulk-message', async (req, res) => {
-  try {
-    const result = await BulkMessagingService.sendBulkMessage(req.body);
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    console.error('Bulk messaging error:', error);
-    res.status(500).json({ error: 'Failed to send bulk message' });
-  }
-});
-
-// Analytics endpoint
-app.get('/api/analytics', async (req, res) => {
-  try {
-    const data = await analyticsService.getAnalytics(req.query);
-    res.status(200).json(data);
-  } catch (error) {
-    console.error('Analytics error:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics' });
-  }
-});
-
-// Reporting endpoint
-app.get('/api/reports', async (req, res) => {
-  try {
-    const reports = await reportingService.generateReport(req.query);
-    res.status(200).json(reports);
-  } catch (error) {
-    console.error('Reporting error:', error);
-    res.status(500).json({ error: 'Failed to generate report' });
-  }
-});
- // Route to trigger the QR Code in Render Logs
-app.get('/generate-qr', async (req, res) => {
-  const { phone } = req.query;
-  if (!phone) return res.status(400).send('Add ?phone=YOUR_NUMBER to the URL');
-
-  try {
-    // This calls the "Golden Version" service we just fixed
-    const session = await linkingService.generateLinkingSession(phone);
-    res.json({
-      message: "Check your Render Logs for the QR Code!",
-      pin: session.pin,
-      sessionId: session.sessionId
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============ ERROR HANDLING ============
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+bot.command("start", async (ctx) => {
+  await ctx.reply("WhatsApp Bot Command Center", {
+    reply_markup: mainMenu
   });
 });
 
-// ============ SERVER STARTUP ============
-const startServer = async () => {
-  try {
-    // Initialize database
-    await db.initialize();
-    console.log('✓ Database connected');
+// --- CALLBACK LISTENERS ---
 
-    // Initialize Baileys service
-    await baileysService.initialize();
-    console.log('✓ Baileys service initialized');
+bot.callbackQuery("link_wa", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText("Initializing WhatsApp connection... Fetching QR Code.");
+  // Signals index.js to start session
+  process.emit('REQUEST_QR_SCAN', { chatId: ctx.chat.id }); 
+});
 
-    // Start Express server
-    app.listen(PORT, HOST, () => {
-      console.log(`
-╔════════════════════════════════════════╗
-║   WhatsApp Bot Integration Started     ║
-║   Running on: ${HOST}:${PORT}
-║   Environment: ${process.env.NODE_ENV || 'development'}
-║   Timestamp: ${new Date().toISOString()}
-╚════════════════════════════════════════╝
-      `);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
+bot.callbackQuery("request_pairing_code", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Please enter the phone number with country code (e.g. 23481...) to receive a pairing code:");
+  
+  // Set a temporary state for the next message listener
+  process.emit('SET_USER_STATE', { chatId: ctx.chat.id, state: 'AWAITING_PHONE_NUMBER' });
+});
+
+bot.callbackQuery("restart_connection", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText("Restarting... Switching back to QR Code scan.");
+  process.emit('REQUEST_QR_SCAN', { chatId: ctx.chat.id });
+});
+
+bot.callbackQuery("check_status", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  process.emit('CHECK_WHATSAPP_STATUS', { chatId: ctx.chat.id });
+});
+
+// --- MESSAGE LISTENER FOR PHONE NUMBERS ---
+
+bot.on("message:text", async (ctx) => {
+  const text = ctx.message.text;
+  
+  // This event will be caught in index.js to trigger Baileys requestPairingCode
+  process.emit('TELEGRAM_TEXT_INPUT', { 
+    chatId: ctx.chat.id, 
+    text: text 
+  });
+});
+
+// --- EXPORTED FUNCTIONS ---
+
+module.exports = {
+  bot: bot,
+
+  initialize: () => {
+    bot.start();
+    console.log("Telegram Bot is listening...");
+  },
+  
+  sendCode: async (chatId, code) => {
+    const target = chatId || process.env.TELEGRAM_ADMIN_ID;
+    if (target) {
+      await bot.api.sendMessage(target, `YOUR WHATSAPP PAIRING CODE:\n\n${code}\n\nCopy this and paste it into:\nWhatsApp > Linked Devices > Link with phone number.`, {
+        reply_markup: qrOptionMenu
+      });
+      console.log("Pairing code sent to Telegram.");
+    }
+  },
+
+  sendQR: async (chatId, imageBuffer) => {
+    const target = chatId || process.env.TELEGRAM_ADMIN_ID;
+    if (target) {
+      await bot.api.sendPhoto(target, new InputFile(imageBuffer), {
+        caption: "Scan this QR code in WhatsApp\n\n1. Settings > Linked Devices\n2. Link a Device\n\nIf you cannot scan, click the button below to get a code.",
+        reply_markup: codeOptionMenu
+      });
+      console.log("QR Code sent to Telegram.");
+    }
+  },
+
+  sendSimpleMessage: async (chatId, text) => {
+    const target = chatId || process.env.TELEGRAM_ADMIN_ID;
+    await bot.api.sendMessage(target, text);
   }
 };
-
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\nShutting down gracefully...');
-  await baileysService.disconnect();
-  await db.close();
-  process.exit(0);
-});
-
-// Start the application
-startServer();
-
-module.exports = app;
