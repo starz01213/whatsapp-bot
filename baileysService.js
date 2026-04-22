@@ -2,7 +2,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  makeCacheableSignalKeyStore
+  fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
@@ -11,143 +11,164 @@ const fs = require('fs');
 
 const telegram = require('./telegramService');
 
-// =====================
-// ACTIVE SESSIONS
-// =====================
-const activeSockets = new Map();
-const userState = new Map();
+let activeSock = null;
 
-// =====================
+// =========================
 // START WHATSAPP SESSION
-// =====================
+// =========================
 async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
+  console.log("Starting WhatsApp session...");
+
   const logger = pino({ level: 'silent' });
 
-  const { state, saveCreds } = await useMultiFileAuthState(`sessions/${sessionId}`);
+  // Get latest Baileys version (IMPORTANT FIX for QR/488 issues)
+  const { version } = await fetchLatestBaileysVersion();
+
+  const { state, saveCreds } = await useMultiFileAuthState(
+    `sessions/${sessionId}`
+  );
 
   const sock = makeWASocket({
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
-    },
+    version,
+    auth: state,
     printQRInTerminal: false,
     logger
   });
 
-  activeSockets.set(sessionId, sock);
+  activeSock = sock;
 
-  // =====================
-  // PAIRING CODE MODE
-  // =====================
-  if (phoneNumber && !sock.authState.creds.registered) {
-    try {
-      const code = await sock.requestPairingCode(phoneNumber);
-      await telegram.sendCode(code);
-    } catch (err) {
-      console.log("Pairing error:", err);
-      await telegram.sendCode("ERROR");
-    }
-  }
-
-  // =====================
-  // SAVE SESSION
-  // =====================
+  // =========================
+  // AUTH SAVE
+  // =========================
   sock.ev.on('creds.update', saveCreds);
 
-  // =====================
-  // CONNECTION HANDLER
-  // =====================
+  // =========================
+  // CONNECTION EVENTS
+  // =========================
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // QR CODE GENERATION
+    console.log("Connection:", connection);
+
+    // =========================
+    // QR GENERATION
+    // =========================
     if (qr && !phoneNumber) {
+      console.log("QR GENERATED");
+
       try {
         const buffer = await QRCode.toBuffer(qr);
         await telegram.sendQR(buffer);
       } catch (err) {
-        console.log("QR Error:", err);
+        console.log("QR ERROR:", err.message);
       }
     }
 
+    // =========================
     // CONNECTED
+    // =========================
     if (connection === 'open') {
-      const phone = sock.user?.id?.split(':')[0];
-      console.log("WhatsApp Connected:", phone);
-      await telegram.bot.api.sendMessage(chatId, "✅ WhatsApp Connected: " + phone);
+      console.log("WhatsApp Connected");
+
+      await telegram.bot.api.sendMessage(
+        chatId,
+        "✅ WhatsApp Connected Successfully"
+      );
     }
 
+    // =========================
     // DISCONNECTED
+    // =========================
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
       console.log("Disconnected:", statusCode);
+
+      const shouldReconnect =
+        statusCode !== DisconnectReason.loggedOut;
+
+      // ❌ FIX: avoid infinite crash loop on 488
+      if (statusCode === 488) {
+        console.log("⚠️ Session timeout (488). Restarting clean session...");
+        fs.rmSync(`sessions/${sessionId}`, {
+          recursive: true,
+          force: true
+        });
+      }
 
       if (shouldReconnect) {
         console.log("Reconnecting...");
         startWhatsApp(sessionId, chatId, phoneNumber);
       } else {
-        console.log("Logged out, cleaning session");
-
-        activeSockets.delete(sessionId);
-        fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
+        console.log("Logged out permanently. Clearing session.");
+        fs.rmSync(`sessions/${sessionId}`, {
+          recursive: true,
+          force: true
+        });
       }
     }
   });
 
+  // =========================
+  // PAIRING CODE MODE
+  // =========================
+  if (phoneNumber) {
+    try {
+      const code = await sock.requestPairingCode(phoneNumber);
+      await telegram.sendCode(code);
+    } catch (err) {
+      console.log("Pairing error:", err.message);
+    }
+  }
+
   return sock;
 }
 
-// =====================
-// EVENT SYSTEM (FROM TELEGRAM)
-// =====================
+// =========================
+// TELEGRAM EVENTS
+// =========================
 
-// START QR MODE
+// START QR FLOW
 process.on('REQUEST_QR_SCAN', async ({ chatId }) => {
   const sessionId = chatId.toString();
+
   await startWhatsApp(sessionId, chatId);
 });
 
-// SET STATE (for phone input flow)
-process.on('SET_USER_STATE', ({ chatId, state }) => {
-  userState.set(chatId, state);
-});
-
-// HANDLE PHONE NUMBER INPUT
+// PHONE INPUT FLOW
 process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
-  const state = userState.get(chatId);
+  const sessionId = chatId.toString();
 
-  if (state === 'AWAITING_PHONE_NUMBER') {
-    const phoneNumber = text.replace(/[^0-9]/g, '');
+  const phone = text.replace(/[^0-9]/g, '');
 
-    if (phoneNumber.length < 10) {
-      return telegram.bot.api.sendMessage(chatId, "❌ Invalid number format");
-    }
-
-    userState.delete(chatId);
-
-    const sessionId = chatId.toString();
-    await startWhatsApp(sessionId, chatId, phoneNumber);
+  if (phone.length < 10) {
+    return telegram.bot.api.sendMessage(
+      chatId,
+      "❌ Invalid number format"
+    );
   }
+
+  await startWhatsApp(sessionId, chatId, phone);
 });
 
 // STATUS CHECK
 process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
-  const sessionId = chatId.toString();
-  const sock = activeSockets.get(sessionId);
+  if (activeSock?.user) {
+    const phone = activeSock.user.id.split(':')[0];
 
-  if (sock?.user) {
-    const phone = sock.user.id.split(':')[0];
-    await telegram.bot.api.sendMessage(chatId, `🟢 Online: ${phone}`);
+    await telegram.bot.api.sendMessage(
+      chatId,
+      `🟢 Online: ${phone}`
+    );
   } else {
-    await telegram.bot.api.sendMessage(chatId, "🔴 Offline");
+    await telegram.bot.api.sendMessage(
+      chatId,
+      "🔴 Offline"
+    );
   }
 });
 
-// =====================
-// EXPORTS
-// =====================
+// =========================
 module.exports = {
   startWhatsApp
 };
