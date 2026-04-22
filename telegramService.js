@@ -2,25 +2,46 @@ const { Bot, InlineKeyboard, InputFile } = require('grammy');
 
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 
-// --- MENU DEFINITIONS ---
+// =====================
+// ADMIN SETUP (FIXED)
+// =====================
+const adminIds = (process.env.ADMIN_ID || "")
+  .split(",")
+  .map(id => id.trim())
+  .filter(Boolean);
 
-// The Main Menu seen when you type /start
+// =====================
+// MESSAGE HANDLER (FIXED)
+// =====================
+bot.on("message", async (ctx) => {
+  if (!ctx.message || !ctx.message.text) return;
+
+  if (!adminIds.includes(String(ctx.chat.id))) return;
+
+  process.emit('TELEGRAM_TEXT_INPUT', {
+    chatId: ctx.chat.id,
+    text: ctx.message.text
+  });
+});
+
+// =====================
+// MENUS
+// =====================
 const mainMenu = new InlineKeyboard()
   .text("🔗 Link WhatsApp", "link_wa")
   .text("📊 Status", "check_status")
   .row()
   .text("⚙️ Settings", "settings");
 
-// The button under the QR Code to switch to 8-digit text code
 const codeOptionMenu = new InlineKeyboard()
   .text("🔢 Use 8-Digit Code Instead", "request_pairing_code");
 
-// The button under the 8-digit code to go back to QR
 const qrOptionMenu = new InlineKeyboard()
   .text("📸 Try QR Code Instead", "restart_connection");
 
-// --- COMMANDS ---
-
+// =====================
+// COMMANDS
+// =====================
 bot.command("start", async (ctx) => {
   await ctx.reply("👋 *WhatsApp Bot Command Center*", {
     parse_mode: "Markdown",
@@ -28,69 +49,86 @@ bot.command("start", async (ctx) => {
   });
 });
 
-// --- CALLBACK LISTENERS (Button Clicks) ---
+// =====================
+// CALLBACKS
+// =====================
 
-// 1. Initial Link Click (Defaults to QR)
+// LINK WHATSAPP (QR)
 bot.callbackQuery("link_wa", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply("🔄 Initializing WhatsApp connection... Fetching QR Code.");
-  // Signals baileysService to start the session and generate QR
-  process.emit('REQUEST_QR_SCAN'); 
+
+  process.emit('REQUEST_QR_SCAN', { chatId: ctx.chat.id });
 });
 
-// 2. Switching to 8-Digit Code
+// PAIRING CODE MODE
 bot.callbackQuery("request_pairing_code", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.reply("⏳ *Requesting 8-digit code for 2348144821073...*");
-  // Signals baileysService to request the numeric code
-  process.emit('REQUEST_PAIRING_CODE', "2348144821073"); 
+
+  await ctx.reply("⏳ Requesting pairing mode...");
+
+  process.emit('SET_USER_STATE', {
+    chatId: ctx.chat.id,
+    state: 'AWAITING_PHONE_NUMBER'
+  });
+
+  await ctx.reply("📱 Send your WhatsApp number with country code (e.g. 234XXXXXXXXXX)");
 });
 
-// 3. Restarting / Going back to QR
+// RESTART QR
 bot.callbackQuery("restart_connection", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply("🔄 Restarting... Switching back to QR Code scan.");
-  process.emit('REQUEST_QR_SCAN');
+
+  process.emit('REQUEST_QR_SCAN', { chatId: ctx.chat.id });
 });
 
-// --- EXPORTED FUNCTIONS ---
-
+// =====================
+// EXPORTS
+// =====================
 module.exports = {
-  // Use this to export the bot instance if you need it elsewhere
-  bot: bot,
+  bot,
 
   initialize: () => {
     bot.start();
     console.log("🤖 Telegram Bot is listening...");
   },
-  
-  // Sends the 8-digit code as a text message
+
+  // =====================
+  // SEND PAIRING CODE (FIXED MULTI-ADMIN)
+  // =====================
   sendCode: async (code) => {
-    const adminId = process.env.TELEGRAM_ADMIN_ID;
-    if (adminId) {
-      await bot.api.sendMessage(adminId, `🔑 *YOUR WHATSAPP PAIRING CODE:*\n\n\`${code}\`\n\n_Copy this and paste it into:_\n_WhatsApp > Linked Devices > Link with phone number._`, {
-        parse_mode: "Markdown",
-        reply_markup: qrOptionMenu
-      });
-      console.log("✅ Pairing code sent to Telegram.");
-    } else {
-      console.log("❌ Cannot send code: TELEGRAM_ADMIN_ID is missing.");
+    if (adminIds.length === 0) return console.log("❌ No ADMIN_ID set");
+
+    for (const adminId of adminIds) {
+      await bot.api.sendMessage(
+        adminId,
+        `🔑 *YOUR WHATSAPP PAIRING CODE:*\n\n\`${code}\`\n\n_WhatsApp > Linked Devices > Link with phone number._`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: qrOptionMenu
+        }
+      );
     }
+
+    console.log("✅ Pairing code sent");
   },
 
-  // Sends the QR code as a photo
+  // =====================
+  // SEND QR (FIXED MULTI-ADMIN)
+  // =====================
   sendQR: async (imageBuffer) => {
-    const adminId = process.env.TELEGRAM_ADMIN_ID;
-    if (adminId) {
-      // We send this as a photo so you can scan it directly
+    if (adminIds.length === 0) return console.log("❌ No ADMIN_ID set");
+
+    for (const adminId of adminIds) {
       await bot.api.sendPhoto(adminId, new InputFile(imageBuffer), {
-        caption: "📸 *Scan this QR code in WhatsApp*\n\n1. Settings > Linked Devices\n2. Link a Device\n\n_If you can't scan, click the button below to get a code._",
+        caption:
+          "📸 *Scan this QR code in WhatsApp*\n\n1. Settings > Linked Devices\n2. Link a Device",
         parse_mode: "Markdown",
         reply_markup: codeOptionMenu
       });
-      console.log("✅ QR Code sent to Telegram.");
-    } else {
-      console.log("❌ Cannot send QR: TELEGRAM_ADMIN_ID is missing.");
     }
+
+    console.log("✅ QR Code sent");
   }
 };
