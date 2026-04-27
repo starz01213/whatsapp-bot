@@ -25,10 +25,11 @@ const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Bot is running'));
 app.listen(PORT, () => console.log('Keep-alive server listening on port ' + PORT));
 
-// --- AUTHENTICATION SHIELD ---
 const isAdmin = (chatId) => {
-    return ADMIN_IDS.includes(String(chatId));
+    // This forces both sides to be strings and removes any hidden spaces
+    return ADMIN_IDS.map(id => String(id).trim()).includes(String(chatId).trim());
 };
+
 
 // --- WHATSAPP CONNECTION ENGINE ---
 async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
