@@ -9,36 +9,41 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const express = require('express');
-const { Boom } = require('@hapi/boom'); // Added for robust error parsing
 const telegram = require('./telegramService');
 const { initDb, saveSessionToDb, getSessionFromDb, updateStatusInDb } = require('./db');
 
+// Load Admin IDs from .env
 const ADMIN_IDS = (process.env.ADMIN_ID || "").split(",").map(id => id.trim());
+
 const userState = new Map();
 const activeSockets = new Map();
-const connectingSessions = new Set(); // Guard to prevent spammy loops
 
-// --- KEEP-ALIVE ---
+// --- KEEP-ALIVE SERVER FOR RENDER ---
 const app = express();
 const PORT = process.env.PORT || 3000;
+
 app.get('/', (req, res) => res.send('Bot is running'));
-app.listen(PORT, () => console.log('Server on port ' + PORT));
+app.listen(PORT, () => console.log('Keep-alive server listening on port ' + PORT));
 
-const isAdmin = (chatId) => ADMIN_IDS.includes(String(chatId));
+// --- AUTHENTICATION SHIELD ---
+const isAdmin = (chatId) => {
+    return ADMIN_IDS.includes(String(chatId));
+};
 
+// --- WHATSAPP CONNECTION ENGINE ---
 async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
     if (!isAdmin(chatId)) return;
-    
-    // Guard against multiple simultaneous connection attempts for the same session
-    if (connectingSessions.has(sessionId)) return;
-    connectingSessions.add(sessionId);
 
     const logger = pino({ level: 'silent' });
-    const { state, saveCreds } = await useMultiFileAuthState(`sessions/${sessionId}`);
     const savedSession = await getSessionFromDb(sessionId);
+    const { state, saveCreds } = await useMultiFileAuthState(`sessions/${sessionId}`);
 
     if (savedSession && !state.creds && savedSession.session_data) {
-        state.creds = JSON.parse(savedSession.session_data);
+        try {
+            state.creds = JSON.parse(savedSession.session_data);
+        } catch (e) {
+            console.error("Failed to parse session data from DB");
+        }
     }
 
     const sock = makeWASocket({
@@ -47,105 +52,153 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         printQRInTerminal: false,
-        logger,
-        markOnlineOnConnect: false
+        logger
     });
 
     activeSockets.set(sessionId, sock);
 
-    // --- PAIRING CODE LOGIC (Spam Protected) ---
+    // ANTI-SPAM FIX 1: Wait 3 seconds before requesting code to ensure socket is ready
     if (phoneNumber && !sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(phoneNumber);
-                await telegram.sendCode(chatId, code);
+                const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+                await telegram.sendCode(chatId, formattedCode);
             } catch (err) {
-                // Only alert if it's a real error, not just a "request in progress"
-                if (!err.message.includes('already requested')) {
-                    console.error("Pairing Error:", err.message);
-                }
+                await telegram.sendSimpleMessage(chatId, "Failed to request pairing code. Check number format or try again later.");
+                // Terminate connection manually so it hits the cleanup block below
+                sock.ws.close();
             }
-        }, 3000); // 3-second delay to let the socket settle
+        }, 3000);
     }
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        const credsJson = JSON.stringify(state.creds);
+        const phone = sock.user ? sock.user.id.split(':')[0] : 'pending';
+        await saveSessionToDb(sessionId, phone, credsJson);
+    });
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
+        // Send QR buffer only if no phone number was provided
         if (qr && !phoneNumber) {
             try {
-                const buffer = await QRCode.toBuffer(qr);
+                console.log("QR Received, generating buffer...");
+                const buffer = await QRCode.toBuffer(qr, { scale: 8 });
                 await telegram.sendQR(chatId, buffer);
-            } catch (e) {}
+            } catch (qrErr) {
+                console.error("QR Buffer Error:", qrErr.message);
+            }
         }
 
         if (connection === 'open') {
-            connectingSessions.delete(sessionId); // Connection successful, remove guard
             const phone = sock.user.id.split(':')[0];
             await updateStatusInDb(sessionId, 'online');
-            await saveSessionToDb(sessionId, phone, JSON.stringify(state.creds));
             await telegram.sendSimpleMessage(chatId, "WhatsApp connection active: " + phone);
+            console.log("Connection opened for " + phone);
         }
 
         if (connection === 'close') {
-            connectingSessions.delete(sessionId); // Connection closed, allow fresh attempt
-            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            const isLoggedOut = reason === DisconnectReason.loggedOut;
-
+            const statusCode = (lastDisconnect.error)?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
             await updateStatusInDb(sessionId, 'offline');
-
-            if (!isLoggedOut) {
-                console.log("Reconnecting session: " + sessionId);
-                // Human-like delay before restarting to prevent rapid-fire failures
-                setTimeout(() => startWhatsApp(sessionId, chatId, phoneNumber), 5000);
+            
+            // ANTI-SPAM FIX 2: Only auto-reconnect if the account was previously registered.
+            if (shouldReconnect && state.creds.registered) {
+                console.log("Reconnecting registered session: " + sessionId);
+                setTimeout(() => startWhatsApp(sessionId, chatId, null), 5000);
             } else {
-                console.log("Logged out: " + sessionId);
+                console.log("Session terminated or failed pairing. Stopping loop.");
                 activeSockets.delete(sessionId);
+                
+                // Wipe the broken session folder so the loop completely dies
                 if (fs.existsSync(`sessions/${sessionId}`)) {
                     fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
                 }
-                await telegram.sendSimpleMessage(chatId, "Logged out. Please link again.");
+                
+                if (!state.creds.registered) {
+                    await telegram.sendSimpleMessage(chatId, "Connection closed. The pairing process timed out or failed. Please try linking again.");
+                } else {
+                    await telegram.sendSimpleMessage(chatId, "WhatsApp session logged out. Please link again.");
+                }
             }
         }
     });
+
+    return sock;
 }
 
-// --- SIGNAL LISTENERS ---
+// --- TELEGRAM SIGNAL LISTENERS ---
 process.on('REQUEST_QR_SCAN', async ({ chatId }) => {
-    await startWhatsApp(chatId.toString(), chatId);
+    if (!isAdmin(chatId)) return;
+    
+    // Wipe old session data before starting a fresh QR request
+    const sessionId = chatId.toString();
+    if (fs.existsSync(`sessions/${sessionId}`)) {
+        fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
+    }
+    
+    await startWhatsApp(sessionId, chatId);
 });
 
 process.on('SET_USER_STATE', ({ chatId, state }) => {
+    if (!isAdmin(chatId)) return;
     userState.set(chatId, state);
 });
 
 process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
+    if (!isAdmin(chatId)) return;
+    
     const state = userState.get(chatId);
     if (state === 'AWAITING_PHONE_NUMBER') {
-        const num = text.replace(/[^0-9]/g, '');
-        if (num.length >= 10) {
+        const phoneNumber = text.replace(/[^0-9]/g, '');
+        if (phoneNumber.length >= 10) {
             userState.delete(chatId);
-            await startWhatsApp(chatId.toString(), chatId, num);
+            const sessionId = chatId.toString();
+            
+            // Wipe old session data before starting a fresh pairing code request
+            if (fs.existsSync(`sessions/${sessionId}`)) {
+                fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
+            }
+            
+            await startWhatsApp(sessionId, chatId, phoneNumber);
         } else {
-            await telegram.sendSimpleMessage(chatId, "Invalid number. Provide country code.");
+            await telegram.sendSimpleMessage(chatId, "Invalid format. Send number with country code.");
         }
     }
 });
 
 process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
-    const sock = activeSockets.get(chatId.toString());
+    if (!isAdmin(chatId)) return;
+    
+    const sessionId = chatId.toString();
+    const sock = activeSockets.get(sessionId);
+    
     if (sock && sock.user) {
-        await telegram.sendSimpleMessage(chatId, "Status: Online\nAccount: " + sock.user.id.split(':')[0]);
+        const phone = sock.user.id.split(':')[0];
+        await telegram.sendSimpleMessage(chatId, "Status: Online\nConnected Account: " + phone);
     } else {
         await telegram.sendSimpleMessage(chatId, "Status: Offline");
     }
 });
 
+// --- SYSTEM INITIALIZATION ---
 async function boot() {
-    await initDb();
-    telegram.initialize();
-    console.log("System initialized");
+    if (ADMIN_IDS.length === 0 || ADMIN_IDS[0] === "") {
+        console.error("FATAL ERROR: No ADMIN_ID provided in .env");
+        process.exit(1);
+    }
+
+    try {
+        await initDb();
+        telegram.initialize();
+        console.log("System Ready. Authorized IDs: " + ADMIN_IDS.join(", "));
+    } catch (err) {
+        console.error("Boot Error:", err.message);
+    }
 }
 
-boot().catch(console.error);
+boot();
