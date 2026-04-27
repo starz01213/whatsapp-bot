@@ -1,119 +1,106 @@
 const TelegramBot = require('node-telegram-bot-api');
 
-// Initialize the bot with polling
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
-// =====================
-// ADMIN SETUP
-// =====================
 const adminIds = (process.env.ADMIN_ID || "")
   .split(",")
   .map(id => id.trim())
   .filter(Boolean);
 
-// =====================
-// MENUS
-// =====================
-const mainMenu = {
+// --- KEYBOARDS ---
+
+// Persistent Reply Keyboard at the bottom
+const welcomeKeyboard = {
+  reply_markup: {
+    keyboard: [
+      [{ text: "Link WhatsApp" }],
+      [{ text: "Status" }, { text: "Settings" }]
+    ],
+    resize_keyboard: true
+  }
+};
+
+// Inline buttons that appear after clicking Link WhatsApp
+const linkOptions = {
   reply_markup: {
     inline_keyboard: [
-      [{ text: "Link WhatsApp", callback_data: "link_wa" }, { text: "Status", callback_data: "check_status" }],
-      [{ text: "Settings", callback_data: "settings" }]
+      [{ text: "Scan QR Code", callback_data: "link_qr" }],
+      [{ text: "Use Pairing Code", callback_data: "link_code" }]
     ]
   }
 };
 
 const codeOptionMenu = {
   reply_markup: {
-    inline_keyboard: [
-      [{ text: "Use 8-Digit Code Instead", callback_data: "request_pairing_code" }]
-    ]
+    inline_keyboard: [[{ text: "Use 8-Digit Code Instead", callback_data: "link_code" }]]
   }
 };
 
 const qrOptionMenu = {
   reply_markup: {
-    inline_keyboard: [
-      [{ text: "Try QR Code Instead", callback_data: "restart_connection" }]
-    ]
+    inline_keyboard: [[{ text: "Try QR Code Instead", callback_data: "link_qr" }]]
   }
 };
 
-// =====================
-// MESSAGE HANDLER
-// =====================
+// --- LISTENERS ---
+
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Security Check
   if (!adminIds.includes(String(chatId))) return;
 
   if (text === '/start') {
-    bot.sendMessage(chatId, "WhatsApp Bot Command Center", mainMenu);
-  } else if (text && !text.startsWith('/')) {
-    // Forward text input to Baileys logic in index.js
+    bot.sendMessage(chatId, "Welcome to WhatsApp Bot Command Center", welcomeKeyboard);
+  } 
+  
+  else if (text === "Link WhatsApp") {
+    bot.sendMessage(chatId, "Choose your connection method:", linkOptions);
+  }
+
+  else if (text === "Status") {
+    process.emit('CHECK_WHATSAPP_STATUS', { chatId });
+  }
+
+  else if (text && !text.startsWith('/') && text !== "Link WhatsApp") {
     process.emit('TELEGRAM_TEXT_INPUT', { chatId, text });
   }
 });
 
-// =====================
-// CALLBACK QUERY HANDLER
-// =====================
 bot.on('callback_query', (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
   bot.answerCallbackQuery(query.id);
 
-  if (data === "link_wa") {
-    bot.sendMessage(chatId, "Initializing WhatsApp connection... Fetching QR Code.");
+  if (data === "link_qr") {
+    bot.sendMessage(chatId, "Initializing QR Code... Please wait.");
     process.emit('REQUEST_QR_SCAN', { chatId });
   } 
   
-  else if (data === "request_pairing_code") {
-    bot.sendMessage(chatId, "Requesting pairing mode...");
+  else if (data === "link_code") {
     process.emit('SET_USER_STATE', { chatId, state: 'AWAITING_PHONE_NUMBER' });
     bot.sendMessage(chatId, "Send your WhatsApp number with country code (e.g. 234XXXXXXXXXX)");
-  } 
-  
-  else if (data === "restart_connection") {
-    bot.sendMessage(chatId, "Restarting... Switching back to QR Code scan.");
-    process.emit('REQUEST_QR_SCAN', { chatId });
-  } 
-  
-  else if (data === "check_status") {
-    process.emit('CHECK_WHATSAPP_STATUS', { chatId });
   }
 });
 
-// =====================
-// EXPORTS
-// =====================
 module.exports = {
   bot,
-  
-  initialize: () => {
-    console.log("Telegram Bot (node-telegram-bot-api) is listening...");
-  },
+  initialize: () => { console.log("Telegram Bot listening..."); },
 
   sendCode: async (chatId, code) => {
-    const target = chatId || adminIds[0];
-    if (!target) return;
-    await bot.sendMessage(target, `YOUR WHATSAPP PAIRING CODE:\n\n${code}\n\nWhatsApp > Linked Devices > Link with phone number.`, qrOptionMenu);
+    await bot.sendMessage(chatId, `YOUR PAIRING CODE:\n\n\`${code}\`\n\nEnter this on your phone.`, qrOptionMenu);
   },
 
   sendQR: async (chatId, imageBuffer) => {
-    const target = chatId || adminIds[0];
-    if (!target) return;
-    await bot.sendPhoto(target, imageBuffer, {
-      caption: "Scan this QR code in WhatsApp\n\n1. Settings > Linked Devices\n2. Link a Device",
+    // Ensure we are sending the buffer correctly
+    await bot.sendPhoto(chatId, imageBuffer, {
+      caption: "Scan this QR code in WhatsApp settings",
       ...codeOptionMenu
     });
   },
 
   sendSimpleMessage: async (chatId, text) => {
-    const target = chatId || adminIds[0];
-    if (target) await bot.sendMessage(target, text);
+    await bot.sendMessage(chatId, text);
   }
 };
