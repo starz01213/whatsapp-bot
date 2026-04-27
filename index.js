@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { 
     useMultiFileAuthState, 
     makeWASocket, 
@@ -7,42 +8,42 @@ const {
 const pino = require('pino');
 const QRCode = require('qrcode');
 const fs = require('fs');
+const express = require('express');
 const telegram = require('./telegramService');
 const { initDb, saveSessionToDb, getSessionFromDb, updateStatusInDb } = require('./db');
 
-// Load Admin IDs from .env (format: ADMIN_ID=123,456)
+// Load Admin IDs from .env
 const ADMIN_IDS = (process.env.ADMIN_ID || "").split(",").map(id => id.trim());
 
 const userState = new Map();
 const activeSockets = new Map();
 
-// --- AUTHENTICATION SHIELD ---
+// --- KEEP-ALIVE SERVER FOR RENDER ---
+const app = express();
+const PORT = process.env.PORT || 3000;
 
+app.get('/', (req, res) => res.send('Bot is running'));
+app.listen(PORT, () => console.log('Keep-alive server listening on port ' + PORT));
+
+// --- AUTHENTICATION SHIELD ---
 const isAdmin = (chatId) => {
     return ADMIN_IDS.includes(String(chatId));
 };
 
 // --- WHATSAPP CONNECTION ENGINE ---
-
-/**
- * Starts a WhatsApp session.
- * @param {string} sessionId Unique ID for the session (based on Telegram Chat ID)
- * @param {number} chatId The Telegram ID of the admin
- * @param {string|null} phoneNumber Optional phone number for pairing code mode
- */
 async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
     if (!isAdmin(chatId)) return;
 
     const logger = pino({ level: 'silent' });
-    
-    // Check database for existing credentials
     const savedSession = await getSessionFromDb(sessionId);
-    
     const { state, saveCreds } = await useMultiFileAuthState(`sessions/${sessionId}`);
 
-    // Restore credentials from DB if local files are missing
     if (savedSession && !state.creds && savedSession.session_data) {
-        state.creds = JSON.parse(savedSession.session_data);
+        try {
+            state.creds = JSON.parse(savedSession.session_data);
+        } catch (e) {
+            console.error("Failed to parse session data from DB");
+        }
     }
 
     const sock = makeWASocket({
@@ -56,7 +57,6 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
 
     activeSockets.set(sessionId, sock);
 
-    // Request Pairing Code if a phone number was provided
     if (phoneNumber && !sock.authState.creds.registered) {
         try {
             const code = await sock.requestPairingCode(phoneNumber);
@@ -66,13 +66,10 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
         }
     }
 
-    // Save credentials to Database on update
     sock.ev.on('creds.update', async () => {
         await saveCreds();
         const credsJson = JSON.stringify(state.creds);
         const phone = sock.user ? sock.user.id.split(':')[0] : 'pending';
-        
-        // Use sessionId to ensure Admin A and Admin B don't overwrite each other
         await saveSessionToDb(sessionId, phone, credsJson);
         console.log("Database sync successful for session: " + sessionId);
     });
@@ -80,7 +77,6 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Handle QR Generation
         if (qr && !phoneNumber) {
             try {
                 const buffer = await QRCode.toBuffer(qr);
@@ -105,12 +101,16 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
             
             if (shouldReconnect) {
                 console.log("Reconnecting session: " + sessionId);
-                startWhatsApp(sessionId, chatId, phoneNumber);
+                // Added a small delay to prevent rapid-fire crashing
+                setTimeout(() => startWhatsApp(sessionId, chatId, phoneNumber), 5000);
             } else {
-                console.log("Session terminated: User logged out.");
+                console.log("Session terminated: User logged out or bad session.");
                 activeSockets.delete(sessionId);
-                // Optional: Clean up local folder on logout
-                fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
+                // Cleanup local files to prevent the reconnect loop
+                if (fs.existsSync(`sessions/${sessionId}`)) {
+                    fs.rmSync(`sessions/${sessionId}`, { recursive: true, force: true });
+                }
+                await telegram.sendSimpleMessage(chatId, "WhatsApp session logged out. Please link again.");
             }
         }
     });
@@ -119,21 +119,17 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
 }
 
 // --- TELEGRAM SIGNAL LISTENERS ---
-
-// Triggered by 'Link WhatsApp' button
 process.on('REQUEST_QR_SCAN', async ({ chatId }) => {
     if (!isAdmin(chatId)) return;
     const sessionId = chatId.toString();
     await startWhatsApp(sessionId, chatId);
 });
 
-// Sets context for text input
 process.on('SET_USER_STATE', ({ chatId, state }) => {
     if (!isAdmin(chatId)) return;
     userState.set(chatId, state);
 });
 
-// Handles phone number input for pairing codes
 process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
     if (!isAdmin(chatId)) return;
     
@@ -150,7 +146,6 @@ process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
     }
 });
 
-// Handles 'Status' button
 process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
     if (!isAdmin(chatId)) return;
     
@@ -166,7 +161,6 @@ process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
 });
 
 // --- SYSTEM INITIALIZATION ---
-
 async function boot() {
     if (ADMIN_IDS.length === 0 || ADMIN_IDS[0] === "") {
         console.error("FATAL ERROR: No ADMIN_ID provided in .env");
