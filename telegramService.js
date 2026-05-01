@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 
 // ─────────────────────────────────────────────
-// DEBUG LOGGER (mirrors index.js)
+// DEBUG LOGGER
 // ─────────────────────────────────────────────
 const DEBUG    = process.env.DEBUG === 'true';
 const debug    = (...args) => { if (DEBUG) console.log('[DEBUG][TG]', new Date().toISOString(), ...args); };
@@ -10,8 +10,10 @@ const logError = (...args) => console.error('[ERROR][TG]', new Date().toISOStrin
 
 // ─────────────────────────────────────────────
 // BOT INIT
+// polling: false — we start polling manually inside initialize()
+// This prevents the 409 conflict during Render's zero-downtime deploys
 // ─────────────────────────────────────────────
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
 const adminIds = (process.env.ADMIN_ID || "")
     .split(",")
@@ -23,8 +25,6 @@ const isAdmin = (chatId) => adminIds.includes(String(chatId));
 // ─────────────────────────────────────────────
 // KEYBOARDS
 // ─────────────────────────────────────────────
-
-// Persistent bottom keyboard
 const mainMenuKeyboard = {
     reply_markup: {
         keyboard: [
@@ -35,7 +35,6 @@ const mainMenuKeyboard = {
     }
 };
 
-// Inline: choose link method
 const linkMethodMenu = {
     reply_markup: {
         inline_keyboard: [
@@ -45,7 +44,6 @@ const linkMethodMenu = {
     }
 };
 
-// Inline: shown after sending pairing code (offer QR fallback)
 const afterCodeMenu = {
     reply_markup: {
         inline_keyboard: [
@@ -54,7 +52,6 @@ const afterCodeMenu = {
     }
 };
 
-// Inline: shown after sending QR (offer pairing code fallback)
 const afterQRMenu = {
     reply_markup: {
         inline_keyboard: [
@@ -63,13 +60,12 @@ const afterQRMenu = {
     }
 };
 
-// Inline: settings panel
 const settingsMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: "🔄 Reconnect Session",  callback_data: "settings_reconnect" }],
-            [{ text: "🗑️ Unlink WhatsApp",    callback_data: "settings_unlink"    }],
-            [{ text: "❌ Close",               callback_data: "settings_close"     }]
+            [{ text: "🔄 Reconnect Session", callback_data: "settings_reconnect" }],
+            [{ text: "🗑️ Unlink WhatsApp",   callback_data: "settings_unlink"    }],
+            [{ text: "❌ Close",              callback_data: "settings_close"     }]
         ]
     }
 };
@@ -99,19 +95,16 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '🔗 Link WhatsApp' || text === 'Link WhatsApp') {
-        debug(`Link WhatsApp tapped by ${chatId}`);
         await bot.sendMessage(chatId, '🔌 Choose your connection method:', linkMethodMenu);
         return;
     }
 
     if (text === '📶 Status' || text === 'Status') {
-        debug(`Status check requested by ${chatId}`);
         process.emit('CHECK_WHATSAPP_STATUS', { chatId });
         return;
     }
 
     if (text === '⚙️ Settings' || text === 'Settings') {
-        debug(`Settings opened by ${chatId}`);
         await bot.sendMessage(chatId, '⚙️ *Settings*\n\nWhat would you like to do?', {
             parse_mode: 'Markdown',
             ...settingsMenu
@@ -119,9 +112,8 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Fall-through: pass to index.js for state-driven input (e.g. phone number)
     if (text && !text.startsWith('/')) {
-        debug(`Forwarding text input from ${chatId} to TELEGRAM_TEXT_INPUT`);
+        debug(`Forwarding text input from ${chatId}`);
         process.emit('TELEGRAM_TEXT_INPUT', { chatId, text });
     }
 });
@@ -135,15 +127,10 @@ bot.on('callback_query', async (query) => {
     const data   = query.data;
 
     debug(`Callback from ${chatId}: "${data}"`);
-
     await bot.answerCallbackQuery(query.id);
 
-    if (!isAdmin(chatId)) {
-        debug(`Ignored callback — not admin: ${chatId}`);
-        return;
-    }
+    if (!isAdmin(chatId)) return;
 
-    // ── Link flow ──────────────────────────────
     if (data === 'link_qr') {
         logInfo(`QR scan requested by ${chatId}`);
         await bot.sendMessage(chatId, '⏳ Initializing QR Code… please wait.');
@@ -162,10 +149,8 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
-    // ── Settings flow ──────────────────────────
     if (data === 'settings_reconnect') {
         logInfo(`Manual reconnect requested by ${chatId}`);
-        // Delete settings message to keep chat clean
         await bot.deleteMessage(chatId, msgId).catch(() => {});
         await bot.sendMessage(chatId, '🔄 Reconnecting… please wait.');
         process.emit('REQUEST_QR_SCAN', { chatId });
@@ -180,20 +165,21 @@ bot.on('callback_query', async (query) => {
     }
 
     if (data === 'settings_close') {
-        debug(`Settings closed by ${chatId}`);
         await bot.deleteMessage(chatId, msgId).catch(() => {});
         return;
     }
-
-    logError(`Unknown callback_data: "${data}" from ${chatId}`);
 });
 
 // ─────────────────────────────────────────────
-// POLLING ERROR HANDLER
-// Prevents the bot from crashing on network blips
+// POLLING ERROR — silently swallow 409 during
+// Render's deploy overlap; log everything else
 // ─────────────────────────────────────────────
 bot.on('polling_error', (err) => {
-    logError('Polling error:', err.message);
+    if (err.message.includes('409')) {
+        debug('Polling 409 — old instance still shutting down, self-resolves shortly');
+    } else {
+        logError('Polling error:', err.message);
+    }
 });
 
 // ─────────────────────────────────────────────
@@ -202,11 +188,29 @@ bot.on('polling_error', (err) => {
 module.exports = {
     bot,
 
-    initialize: () => {
-        logInfo(`Telegram bot polling — authorized admins: ${adminIds.join(', ')}`);
+    // Must be awaited in boot()
+    // Step 1: deleteWebhook forces Telegram to drop the old instance's session
+    // Step 2: 2s grace period for Render to fully kill the old process
+    // Step 3: startPolling on a clean slate
+    initialize: async () => {
+        logInfo('Clearing stale Telegram session…');
+        try {
+            await bot.deleteWebhook({ drop_pending_updates: true });
+            logInfo('Webhook cleared, pending updates dropped');
+        } catch (err) {
+            logError('deleteWebhook error:', err.message);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        try {
+            await bot.startPolling({ restart: false });
+            logInfo(`Polling active — admins: ${adminIds.join(', ')}`);
+        } catch (err) {
+            logError('startPolling error:', err.message);
+        }
     },
 
-    // Send the pairing code with a QR fallback button
     sendCode: async (chatId, code) => {
         debug(`sendCode → ${chatId}: ${code}`);
         try {
@@ -220,12 +224,11 @@ module.exports = {
         }
     },
 
-    // Send the QR image with a pairing code fallback button
     sendQR: async (chatId, imageBuffer) => {
-        debug(`sendQR → ${chatId} (buffer size: ${imageBuffer.length})`);
+        debug(`sendQR → ${chatId} (${imageBuffer.length} bytes)`);
         try {
             await bot.sendPhoto(chatId, imageBuffer, {
-                caption: '📷 Scan this QR code in *WhatsApp → Linked Devices → Link a Device*',
+                caption: '📷 Scan this in *WhatsApp → Linked Devices → Link a Device*',
                 parse_mode: 'Markdown',
                 ...afterQRMenu
             });
@@ -234,18 +237,16 @@ module.exports = {
         }
     },
 
-    // General message with Markdown support
     sendSimpleMessage: async (chatId, text) => {
-        debug(`sendSimpleMessage → ${chatId}: "${text.slice(0, 60)}…"`);
+        debug(`sendSimpleMessage → ${chatId}: "${String(text).slice(0, 60)}"`);
         try {
             await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
         } catch (err) {
-            // Fallback: send without Markdown if parse fails (e.g. unescaped special chars)
-            logError(`sendSimpleMessage parse error for ${chatId} — retrying plain:`, err.message);
+            logError(`Markdown send failed for ${chatId}, retrying plain`);
             try {
                 await bot.sendMessage(chatId, text);
-            } catch (fallbackErr) {
-                logError(`sendSimpleMessage totally failed for ${chatId}:`, fallbackErr.message);
+            } catch (e) {
+                logError(`sendSimpleMessage totally failed for ${chatId}:`, e.message);
             }
         }
     }
