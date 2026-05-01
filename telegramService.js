@@ -84,23 +84,46 @@ bot.on('callback_query', (query) => {
   }
 });
 
+// --- EXPORTS ---
+
 module.exports = {
   bot,
-  initialize: () => { console.log("Telegram Bot listening..."); },
+  
+  initialize: () => { 
+    console.log("Telegram Bot listening..."); 
+  },
 
   sendCode: async (chatId, code) => {
-    await bot.sendMessage(chatId, `YOUR PAIRING CODE:\n\n\`${code}\`\n\nEnter this on your phone.`, qrOptionMenu);
+    const target = chatId || adminIds[0];
+    if (!target) return;
+    
+    await bot.sendMessage(target, `YOUR PAIRING CODE:\n\n\`${code}\`\n\nEnter this on your phone.`, {
+      parse_mode: 'Markdown',
+      ...qrOptionMenu
+    });
   },
 
   sendQR: async (chatId, imageBuffer) => {
-    // Ensure we are sending the buffer correctly
-    await bot.sendPhoto(chatId, imageBuffer, {
+    const target = chatId || adminIds[0];
+    if (!target) return;
+    
+    await bot.sendPhoto(target, imageBuffer, {
       caption: "Scan this QR code in WhatsApp settings",
       ...codeOptionMenu
     });
   },
 
   sendSimpleMessage: async (chatId, text) => {
-    await bot.sendMessage(chatId, text);
+    // If a specific chatId is provided, send to them. 
+    // If null (like from the webhook), broadcast to all admins.
+    const targets = chatId ? [chatId] : adminIds;
+    
+    for (const target of targets) {
+      try {
+        await bot.sendMessage(target, text, { parse_mode: 'Markdown' });
+      } catch (err) {
+        console.error(`Failed to send message to ${target}`);
+      }
+    }
   }
 };
