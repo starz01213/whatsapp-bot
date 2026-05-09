@@ -1,4 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // ─────────────────────────────────────────────
 // DEBUG LOGGER
@@ -10,8 +13,6 @@ const logError = (...args) => console.error('[ERROR][TG]', new Date().toISOStrin
 
 // ─────────────────────────────────────────────
 // BOT INIT
-// polling: false — we start polling manually inside initialize()
-// This prevents the 409 conflict during Render's zero-downtime deploys
 // ─────────────────────────────────────────────
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
@@ -22,14 +23,18 @@ const adminIds = (process.env.ADMIN_ID || "")
 
 const isAdmin = (chatId) => adminIds.includes(String(chatId));
 
+// Local state tracking to prevent sending download URLs to WhatsApp
+const localStates = {};
+
 // ─────────────────────────────────────────────
 // KEYBOARDS
 // ─────────────────────────────────────────────
 const mainMenuKeyboard = {
     reply_markup: {
         keyboard: [
-            [{ text: "🔗 Link WhatsApp" }],
-            [{ text: "📶 Status" }, { text: "⚙️ Settings" }]
+            [{ text: "Link WhatsApp" }],
+            [{ text: "Status" }, { text: "Settings" }],
+            [{ text: "Download Media" }]
         ],
         resize_keyboard: true
     }
@@ -38,8 +43,8 @@ const mainMenuKeyboard = {
 const linkMethodMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: "📷 Scan QR Code",     callback_data: "link_qr"   }],
-            [{ text: "🔢 Use Pairing Code", callback_data: "link_code" }]
+            [{ text: "Scan QR Code",     callback_data: "link_qr"   }],
+            [{ text: "Use Pairing Code", callback_data: "link_code" }]
         ]
     }
 };
@@ -47,7 +52,7 @@ const linkMethodMenu = {
 const afterCodeMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: "📷 Try QR Code Instead", callback_data: "link_qr" }]
+            [{ text: "Try QR Code Instead", callback_data: "link_qr" }]
         ]
     }
 };
@@ -55,7 +60,7 @@ const afterCodeMenu = {
 const afterQRMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: "🔢 Use Pairing Code Instead", callback_data: "link_code" }]
+            [{ text: "Use Pairing Code Instead", callback_data: "link_code" }]
         ]
     }
 };
@@ -63,9 +68,9 @@ const afterQRMenu = {
 const settingsMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: "🔄 Reconnect Session", callback_data: "settings_reconnect" }],
-            [{ text: "🗑️ Unlink WhatsApp",   callback_data: "settings_unlink"    }],
-            [{ text: "❌ Close",              callback_data: "settings_close"     }]
+            [{ text: "Reconnect Session", callback_data: "settings_reconnect" }],
+            [{ text: "Unlink WhatsApp",   callback_data: "settings_unlink"    }],
+            [{ text: "Close",             callback_data: "settings_close"     }]
         ]
     }
 };
@@ -88,27 +93,108 @@ bot.on('message', async (msg) => {
         logInfo(`/start from ${chatId}`);
         await bot.sendMessage(
             chatId,
-            `👋 *Welcome to WhatsApp Bot Command Center*\n\nChoose an option below:`,
+            `*Welcome to WhatsApp Bot Command Center*\n\nChoose an option below:`,
             { parse_mode: 'Markdown', ...mainMenuKeyboard }
         );
         return;
     }
 
-    if (text === '🔗 Link WhatsApp' || text === 'Link WhatsApp') {
-        await bot.sendMessage(chatId, '🔌 Choose your connection method:', linkMethodMenu);
+    if (text === 'Link WhatsApp') {
+        await bot.sendMessage(chatId, 'Choose your connection method:', linkMethodMenu);
         return;
     }
 
-    if (text === '📶 Status' || text === 'Status') {
+    if (text === 'Status') {
         process.emit('CHECK_WHATSAPP_STATUS', { chatId });
         return;
     }
 
-    if (text === '⚙️ Settings' || text === 'Settings') {
-        await bot.sendMessage(chatId, '⚙️ *Settings*\n\nWhat would you like to do?', {
+    if (text === 'Settings') {
+        await bot.sendMessage(chatId, '*Settings*\n\nWhat would you like to do?', {
             parse_mode: 'Markdown',
             ...settingsMenu
         });
+        return;
+    }
+
+    if (text === 'Download Media') {
+        localStates[chatId] = 'AWAITING_DOWNLOAD_URL';
+        await bot.sendMessage(chatId, 'Send the URL of the media you want to download:');
+        return;
+    }
+
+    // --- DOWNLOAD MEDIA INTERCEPTOR ---
+    if (localStates[chatId] === 'AWAITING_DOWNLOAD_URL') {
+        localStates[chatId] = null; // Clear state immediately
+        const targetUrl = text.trim();
+
+        if (!targetUrl.startsWith('http')) {
+            await bot.sendMessage(chatId, '[ERROR] Invalid URL format. Please click Download Media to try again.');
+            return;
+        }
+
+        const loadMsg = await bot.sendMessage(chatId, '[SYSTEM] Connecting to download service...');
+
+        try {
+            const apiUrl = process.env.DOWNLOAD_API_URL || 'https://YOUR_API_APP_HERE.herokuapp.com';
+            const requestUrl = `${apiUrl}/api/download?url=${encodeURIComponent(targetUrl)}`;
+
+            const response = await axios({
+                method: 'GET',
+                url: requestUrl,
+                responseType: 'stream'
+            });
+
+            // Handle TikTok JSON Image Arrays
+            if (response.headers['content-type'].includes('application/json')) {
+                let jsonData = '';
+                response.data.on('data', chunk => jsonData += chunk);
+                response.data.on('end', async () => {
+                    try {
+                        const parsed = JSON.parse(jsonData);
+                        if (parsed.type === "images") {
+                            await bot.editMessageText('[SYSTEM] Carousel detected. Sending images...', { chat_id: chatId, message_id: loadMsg.message_id });
+                            
+                            let mediaGroup = [];
+                            for (let i = 0; i < parsed.urls.length; i++) {
+                                mediaGroup.push({ type: 'photo', media: parsed.urls[i] });
+                                
+                                if (mediaGroup.length === 10 || i === parsed.urls.length - 1) {
+                                    await bot.sendMediaGroup(chatId, mediaGroup);
+                                    mediaGroup = [];
+                                }
+                            }
+                            await bot.deleteMessage(chatId, loadMsg.message_id).catch(()=>{});
+                        }
+                    } catch (err) {
+                        bot.editMessageText(`[ERROR] Failed to parse image data: ${err.message}`, { chat_id: chatId, message_id: loadMsg.message_id });
+                    }
+                });
+                return;
+            }
+
+            // Handle Video Streams
+            const tempPath = path.join(__dirname, `dl_temp_${Date.now()}.mp4`);
+            const writer = fs.createWriteStream(tempPath);
+            
+            response.data.pipe(writer);
+
+            writer.on('finish', async () => {
+                await bot.editMessageText('[SYSTEM] Download complete. Uploading to Telegram...', { chat_id: chatId, message_id: loadMsg.message_id });
+                await bot.sendVideo(chatId, tempPath);
+                await bot.deleteMessage(chatId, loadMsg.message_id).catch(()=>{});
+                
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); 
+            });
+
+            writer.on('error', (err) => {
+                bot.editMessageText(`[ERROR] File write failed: ${err.message}`, { chat_id: chatId, message_id: loadMsg.message_id });
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            });
+
+        } catch (error) {
+            bot.editMessageText(`[ERROR] Service unreachable or failed: ${error.message}`, { chat_id: chatId, message_id: loadMsg.message_id });
+        }
         return;
     }
 
@@ -133,7 +219,7 @@ bot.on('callback_query', async (query) => {
 
     if (data === 'link_qr') {
         logInfo(`QR scan requested by ${chatId}`);
-        await bot.sendMessage(chatId, '⏳ Initializing QR Code… please wait.');
+        await bot.sendMessage(chatId, 'Initializing QR Code... please wait.');
         process.emit('REQUEST_QR_SCAN', { chatId });
         return;
     }
@@ -143,7 +229,7 @@ bot.on('callback_query', async (query) => {
         process.emit('SET_USER_STATE', { chatId, state: 'AWAITING_PHONE_NUMBER' });
         await bot.sendMessage(
             chatId,
-            '📱 Send your WhatsApp number with country code:\n\n_Example: 234XXXXXXXXXX_',
+            'Send your WhatsApp number with country code:\n\n_Example: 234XXXXXXXXXX_',
             { parse_mode: 'Markdown' }
         );
         return;
@@ -152,7 +238,7 @@ bot.on('callback_query', async (query) => {
     if (data === 'settings_reconnect') {
         logInfo(`Manual reconnect requested by ${chatId}`);
         await bot.deleteMessage(chatId, msgId).catch(() => {});
-        await bot.sendMessage(chatId, '🔄 Reconnecting… please wait.');
+        await bot.sendMessage(chatId, 'Reconnecting... please wait.');
         process.emit('REQUEST_QR_SCAN', { chatId });
         return;
     }
@@ -171,8 +257,7 @@ bot.on('callback_query', async (query) => {
 });
 
 // ─────────────────────────────────────────────
-// POLLING ERROR — silently swallow 409 during
-// Render's deploy overlap; log everything else
+// POLLING ERROR
 // ─────────────────────────────────────────────
 bot.on('polling_error', (err) => {
     if (err.message.includes('409')) {
@@ -187,13 +272,8 @@ bot.on('polling_error', (err) => {
 // ─────────────────────────────────────────────
 module.exports = {
     bot,
-
-    // Must be awaited in boot()
-    // Step 1: deleteWebhook forces Telegram to drop the old instance's session
-    // Step 2: 2s grace period for Render to fully kill the old process
-    // Step 3: startPolling on a clean slate
     initialize: async () => {
-        logInfo('Clearing stale Telegram session…');
+        logInfo('Clearing stale Telegram session...');
         try {
             await bot.deleteWebhook({ drop_pending_updates: true });
             logInfo('Webhook cleared, pending updates dropped');
@@ -212,11 +292,11 @@ module.exports = {
     },
 
     sendCode: async (chatId, code) => {
-        debug(`sendCode → ${chatId}: ${code}`);
+        debug(`sendCode -> ${chatId}: ${code}`);
         try {
             await bot.sendMessage(
                 chatId,
-                `🔑 *Your Pairing Code:*\n\n\`${code}\`\n\n_Enter this in WhatsApp → Linked Devices → Link with phone number._`,
+                `*Your Pairing Code:*\n\n\`${code}\`\n\n_Enter this in WhatsApp -> Linked Devices -> Link with phone number._`,
                 { parse_mode: 'Markdown', ...afterCodeMenu }
             );
         } catch (err) {
@@ -225,10 +305,10 @@ module.exports = {
     },
 
     sendQR: async (chatId, imageBuffer) => {
-        debug(`sendQR → ${chatId} (${imageBuffer.length} bytes)`);
+        debug(`sendQR -> ${chatId} (${imageBuffer.length} bytes)`);
         try {
             await bot.sendPhoto(chatId, imageBuffer, {
-                caption: '📷 Scan this in *WhatsApp → Linked Devices → Link a Device*',
+                caption: 'Scan this in *WhatsApp -> Linked Devices -> Link a Device*',
                 parse_mode: 'Markdown',
                 ...afterQRMenu
             });
@@ -238,7 +318,7 @@ module.exports = {
     },
 
     sendSimpleMessage: async (chatId, text) => {
-        debug(`sendSimpleMessage → ${chatId}: "${String(text).slice(0, 60)}"`);
+        debug(`sendSimpleMessage -> ${chatId}: "${String(text).slice(0, 60)}"`);
         try {
             await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
         } catch (err) {
