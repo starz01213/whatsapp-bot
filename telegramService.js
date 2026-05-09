@@ -123,14 +123,23 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // --- DOWNLOAD MEDIA INTERCEPTOR ---
+        // --- DOWNLOAD MEDIA INTERCEPTOR ---
     if (localStates[chatId] === 'AWAITING_DOWNLOAD_URL') {
         localStates[chatId] = null; // Clear state immediately
-        const targetUrl = text.trim();
+        
+        // Smart URL Extractor: Finds the link even if there is text around it
+        const urlMatch = text.match(/(https?:\/\/[^\s]+)|([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/[^\s]*)?)/i);
 
-        if (!targetUrl.startsWith('http')) {
-            await bot.sendMessage(chatId, '[ERROR] Invalid URL format. Please click Download Media to try again.');
+        if (!urlMatch) {
+            await bot.sendMessage(chatId, '[ERROR] Could not detect a valid link. Please click Download Media to try again.');
             return;
+        }
+
+        let targetUrl = urlMatch[0];
+        
+        // Auto-fix links that are missing the https:// prefix (e.g. www.tiktok.com)
+        if (!targetUrl.startsWith('http')) {
+            targetUrl = 'https://' + targetUrl;
         }
 
         const loadMsg = await bot.sendMessage(chatId, '[SYSTEM] Connecting to download service...');
@@ -197,6 +206,7 @@ bot.on('message', async (msg) => {
         }
         return;
     }
+
 
     if (text && !text.startsWith('/')) {
         debug(`Forwarding text input from ${chatId}`);
