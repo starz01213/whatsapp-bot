@@ -142,7 +142,7 @@ bot.on('message', async (msg) => {
             targetUrl = 'https://' + targetUrl;
         }
 
-        const loadMsg = await bot.sendMessage(chatId, '[SYSTEM] Connecting to download service...');
+        const loadMsg = await bot.sendMessage(chatId, '[SYSTEM] Downloading...');
 
         try {
             const apiUrl = process.env.DOWNLOAD_API_URL || 'https://YOUR_API_APP_HERE.herokuapp.com';
