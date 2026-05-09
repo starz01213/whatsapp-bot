@@ -27,6 +27,9 @@ const logError = (...args) => console.error('[ERROR]', new Date().toISOString(),
 const ADMIN_IDS = (process.env.ADMIN_ID || "").split(",").map(id => id.trim()).filter(Boolean);
 const isAdmin   = (chatId) => ADMIN_IDS.includes(String(chatId));
 
+// Automatically uses Render's assigned URL if deployed there, or falls back to custom APP_URL
+const APP_URL   = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL;
+
 const userState        = new Map(); // chatId    → state string
 const activeSockets    = new Map(); // sessionId → WASocket
 const callbackRegistry = new Map(); // sessionId → callbackUrl
@@ -35,8 +38,6 @@ const callbackRegistry = new Map(); // sessionId → callbackUrl
 // HELPERS
 // ─────────────────────────────────────────────
 
-// Ensure the session directory exists before Baileys tries to write into it.
-// Fixes the ENOENT crash when a socket closes fast and creds.update still fires.
 function ensureSessionDir(sessionId) {
     const dir = `sessions/${sessionId}`;
     if (!fs.existsSync(dir)) {
@@ -54,6 +55,28 @@ function cleanSessionFolder(sessionId) {
 }
 
 // ─────────────────────────────────────────────
+// AUTO-PING (KEEP-ALIVE)
+// ─────────────────────────────────────────────
+function startKeepAlive() {
+    if (!APP_URL) {
+        debug('No APP_URL or RENDER_EXTERNAL_URL found. Auto-ping disabled.');
+        return;
+    }
+    
+    logInfo(`Starting auto-ping to ${APP_URL} every 10 minutes`);
+    
+    // Ping every 10 minutes (600,000 milliseconds)
+    setInterval(async () => {
+        try {
+            const res = await axios.get(APP_URL);
+            debug(`Auto-ping successful: HTTP ${res.status}`);
+        } catch (err) {
+            logError(`Auto-ping failed:`, err.message);
+        }
+    }, 10 * 60 * 1000); 
+}
+
+// ─────────────────────────────────────────────
 // EXPRESS SERVER
 // ─────────────────────────────────────────────
 const app  = express();
@@ -63,8 +86,6 @@ app.use(express.json());
 app.get('/', (_req, res) => res.send('Bot is running'));
 
 // ── POST /api/connect/pairing ─────────────────
-// Body:     { number, callbackUrl }
-// Response: { success, sessionId, pairingCode }
 app.post('/api/connect/pairing', async (req, res) => {
     const { number, callbackUrl } = req.body;
     debug('POST /api/connect/pairing →', { number, callbackUrl });
@@ -91,8 +112,6 @@ app.post('/api/connect/pairing', async (req, res) => {
 });
 
 // ── POST /api/connect/qr ──────────────────────
-// Body:     { callbackUrl }
-// Response: { success, sessionId, qr }
 app.post('/api/connect/qr', async (req, res) => {
     const { callbackUrl } = req.body;
     debug('POST /api/connect/qr →', { callbackUrl });
@@ -140,15 +159,11 @@ async function fireWebhook(sessionId, payload) {
 
 // ─────────────────────────────────────────────
 // EXTERNAL SESSION ENGINE
-// mode: 'pairing' | 'qr' | 'reconnect'
-// Resolves with pairingCode string or qr data URL.
-// Fires webhook when the phone confirms the link.
 // ─────────────────────────────────────────────
 async function startExternalSession(sessionId, phoneNumber, mode) {
     return new Promise(async (resolve, reject) => {
         debug(`startExternalSession → ${sessionId}, mode: ${mode}`);
 
-        // ── FIX: ensure folder exists BEFORE useMultiFileAuthState ──
         ensureSessionDir(sessionId);
 
         const logger = pino({ level: 'silent' });
@@ -179,7 +194,6 @@ async function startExternalSession(sessionId, phoneNumber, mode) {
             settle(reject, new Error('Timed out — no QR or pairing code received within 30s'));
         }, 30_000);
 
-        // Request pairing code after socket stabilises
         if (mode === 'pairing' && phoneNumber) {
             setTimeout(async () => {
                 try {
@@ -196,11 +210,9 @@ async function startExternalSession(sessionId, phoneNumber, mode) {
             }, 3_000);
         }
 
-        // ── FIX: wrap saveCreds in try/catch ──
-        // If the session folder was cleaned between events, don't crash the process
         sock.ev.on('creds.update', async () => {
             try {
-                ensureSessionDir(sessionId); // re-create dir if it was wiped
+                ensureSessionDir(sessionId);
                 await saveCreds();
                 debug(`Creds updated [${sessionId}]`);
                 const phone     = sock.user ? sock.user.id.split(':')[0] : 'pending';
@@ -219,7 +231,6 @@ async function startExternalSession(sessionId, phoneNumber, mode) {
                 code: lastDisconnect?.error?.output?.statusCode
             });
 
-            // Capture QR as data URL and return in the API response
             if (qr && mode === 'qr') {
                 try {
                     const dataUrl = await QRCode.toDataURL(qr, { scale: 8 });
@@ -284,7 +295,6 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
 
     logInfo(`startWhatsApp → ${sessionId}, chatId: ${chatId}, phone: ${phoneNumber || 'QR'}`);
 
-    // ── FIX: ensure folder exists BEFORE useMultiFileAuthState ──
     ensureSessionDir(sessionId);
 
     const logger       = pino({ level: 'silent' });
@@ -321,13 +331,12 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
                 await telegram.sendCode(chatId, formatted);
             } catch (err) {
                 logError(`Admin pairing code failed [${chatId}]:`, err.message);
-                await telegram.sendSimpleMessage(chatId, '❌ Failed to get pairing code. Check the number format or try again.');
+                await telegram.sendSimpleMessage(chatId, 'Failed to get pairing code. Check the number format or try again.');
                 sock.ws.close();
             }
         }, 3_000);
     }
 
-    // ── FIX: wrap saveCreds in try/catch ──
     sock.ev.on('creds.update', async () => {
         try {
             ensureSessionDir(sessionId);
@@ -362,7 +371,7 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
             const phone = sock.user.id.split(':')[0];
             logInfo(`[ADMIN:${sessionId}] OPEN → +${phone}`);
             await updateStatusInDb(sessionId, 'online');
-            await telegram.sendSimpleMessage(chatId, `✅ WhatsApp connected: +${phone}`);
+            await telegram.sendSimpleMessage(chatId, `WhatsApp connected: +${phone}`);
         }
 
         if (connection === 'close') {
@@ -380,9 +389,9 @@ async function startWhatsApp(sessionId, chatId, phoneNumber = null) {
                 cleanSessionFolder(sessionId);
 
                 if (!state.creds.registered) {
-                    await telegram.sendSimpleMessage(chatId, '⏱ Pairing timed out or failed. Please try linking again.');
+                    await telegram.sendSimpleMessage(chatId, 'Pairing timed out or failed. Please try linking again.');
                 } else {
-                    await telegram.sendSimpleMessage(chatId, '🔌 Session logged out. Please link again.');
+                    await telegram.sendSimpleMessage(chatId, 'Session logged out. Please link again.');
                 }
             }
         }
@@ -420,7 +429,7 @@ process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
             cleanSessionFolder(sessionId);
             await startWhatsApp(sessionId, chatId, phoneNumber);
         } else {
-            await telegram.sendSimpleMessage(chatId, '❌ Invalid format. Include country code, e.g. 234XXXXXXXXXX');
+            await telegram.sendSimpleMessage(chatId, 'Invalid format. Include country code, e.g. 234XXXXXXXXXX');
         }
     }
 });
@@ -433,9 +442,9 @@ process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
 
     if (sock && sock.user) {
         const phone = sock.user.id.split(':')[0];
-        await telegram.sendSimpleMessage(chatId, `📶 Status: *Online*\nConnected: +${phone}`);
+        await telegram.sendSimpleMessage(chatId, `Status: *Online*\nConnected: +${phone}`);
     } else {
-        await telegram.sendSimpleMessage(chatId, '🔴 Status: *Offline*');
+        await telegram.sendSimpleMessage(chatId, 'Status: *Offline*');
     }
 });
 
@@ -451,7 +460,7 @@ process.on('UNLINK_WHATSAPP', async ({ chatId }) => {
     }
     cleanSessionFolder(sessionId);
     await updateStatusInDb(sessionId, 'offline');
-    await telegram.sendSimpleMessage(chatId, '🗑️ WhatsApp unlinked. Use *Link WhatsApp* to connect again.');
+    await telegram.sendSimpleMessage(chatId, 'WhatsApp unlinked. Use *Link WhatsApp* to connect again.');
 });
 
 // ─────────────────────────────────────────────
@@ -466,7 +475,6 @@ async function boot() {
         process.exit(1);
     }
 
-    // Ensure the sessions root folder exists
     if (!fs.existsSync('sessions')) {
         fs.mkdirSync('sessions');
         debug('Created sessions/ directory');
@@ -474,7 +482,9 @@ async function boot() {
 
     try {
         await initDb();
-        await telegram.initialize(); // ← awaited so polling starts after deleteWebhook completes
+        await telegram.initialize(); 
+        startKeepAlive(); // Start pinging Render to keep instances awake
+        
         logInfo(`Ready. Admins: ${ADMIN_IDS.join(', ')}`);
         logInfo(`External API: POST /api/connect/pairing | POST /api/connect/qr`);
     } catch (err) {
