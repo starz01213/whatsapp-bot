@@ -33,7 +33,6 @@ const mainMenuKeyboard = {
     reply_markup: {
         keyboard: [
             [{ text: "Link WhatsApp" }],
-            [{ text: "Status" }, { text: "Settings" }],
             [{ text: "Download Media" }]
         ],
         resize_keyboard: true
@@ -61,16 +60,6 @@ const afterQRMenu = {
     reply_markup: {
         inline_keyboard: [
             [{ text: "Use Pairing Code Instead", callback_data: "link_code" }]
-        ]
-    }
-};
-
-const settingsMenu = {
-    reply_markup: {
-        inline_keyboard: [
-            [{ text: "Reconnect Session", callback_data: "settings_reconnect" }],
-            [{ text: "Unlink WhatsApp",   callback_data: "settings_unlink"    }],
-            [{ text: "Close",             callback_data: "settings_close"     }]
         ]
     }
 };
@@ -104,26 +93,13 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === 'Status') {
-        process.emit('CHECK_WHATSAPP_STATUS', { chatId });
-        return;
-    }
-
-    if (text === 'Settings') {
-        await bot.sendMessage(chatId, '*Settings*\n\nWhat would you like to do?', {
-            parse_mode: 'Markdown',
-            ...settingsMenu
-        });
-        return;
-    }
-
     if (text === 'Download Media') {
         localStates[chatId] = 'AWAITING_DOWNLOAD_URL';
         await bot.sendMessage(chatId, 'Send the URL of the media you want to download:');
         return;
     }
 
-        // --- DOWNLOAD MEDIA INTERCEPTOR ---
+    // --- DOWNLOAD MEDIA INTERCEPTOR ---
     if (localStates[chatId] === 'AWAITING_DOWNLOAD_URL') {
         localStates[chatId] = null; // Clear state immediately
         
@@ -207,7 +183,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-
     if (text && !text.startsWith('/')) {
         debug(`Forwarding text input from ${chatId}`);
         process.emit('TELEGRAM_TEXT_INPUT', { chatId, text });
@@ -219,7 +194,6 @@ bot.on('message', async (msg) => {
 // ─────────────────────────────────────────────
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const msgId  = query.message.message_id;
     const data   = query.data;
 
     debug(`Callback from ${chatId}: "${data}"`);
@@ -242,26 +216,6 @@ bot.on('callback_query', async (query) => {
             'Send your WhatsApp number with country code:\n\n_Example: 234XXXXXXXXXX_',
             { parse_mode: 'Markdown' }
         );
-        return;
-    }
-
-    if (data === 'settings_reconnect') {
-        logInfo(`Manual reconnect requested by ${chatId}`);
-        await bot.deleteMessage(chatId, msgId).catch(() => {});
-        await bot.sendMessage(chatId, 'Reconnecting... please wait.');
-        process.emit('REQUEST_QR_SCAN', { chatId });
-        return;
-    }
-
-    if (data === 'settings_unlink') {
-        logInfo(`Unlink requested by ${chatId}`);
-        await bot.deleteMessage(chatId, msgId).catch(() => {});
-        process.emit('UNLINK_WHATSAPP', { chatId });
-        return;
-    }
-
-    if (data === 'settings_close') {
-        await bot.deleteMessage(chatId, msgId).catch(() => {});
         return;
     }
 });
