@@ -63,7 +63,7 @@ app.post('/api/webhook', async (req, res) => {
 
             // Tell the specific admin who requested it that it worked!
             if (chatId) {
-                await telegram.sendSimpleMessage(chatId, `✅ WhatsApp successfully connected via External Service: +${number}`);
+                await telegram.sendSimpleMessage(chatId, `[SUCCESS] WhatsApp successfully connected via External Service: +${number}`);
             }
         } catch (err) {
             logError('Error saving webhook session data:', err.message);
@@ -82,10 +82,10 @@ app.listen(PORT, () => logInfo(`Server listening on port ${PORT}`));
 
 process.on('REQUEST_QR_SCAN', async ({ chatId }) => {
     if (!isAdmin(chatId)) return;
-    if (!EXTERNAL_API_URL) return telegram.sendSimpleMessage(chatId, '❌ EXTERNAL_API_URL not set in .env');
+    if (!EXTERNAL_API_URL) return telegram.sendSimpleMessage(chatId, '[ERROR] EXTERNAL_API_URL not set in .env');
 
     try {
-        await telegram.sendSimpleMessage(chatId, '⏳ Requesting QR Code from external server...');
+        await telegram.sendSimpleMessage(chatId, '[SYSTEM] Requesting QR Code from external server...');
 
         // Tell the external server to send the result to our webhook, and include the chatId
         const webhookUrl = `${APP_URL}/api/webhook?chatId=${chatId}`;
@@ -100,11 +100,11 @@ process.on('REQUEST_QR_SCAN', async ({ chatId }) => {
             const buffer = Buffer.from(base64Data, 'base64');
             await telegram.sendQR(chatId, buffer);
         } else {
-            await telegram.sendSimpleMessage(chatId, '❌ Failed to generate QR on external server.');
+            await telegram.sendSimpleMessage(chatId, '[ERROR] Failed to generate QR on external server.');
         }
     } catch (err) {
         logError('QR Request Error:', err.message);
-        await telegram.sendSimpleMessage(chatId, `❌ External server error: ${err.message}`);
+        await telegram.sendSimpleMessage(chatId, `[ERROR] External server error: ${err.message}`);
     }
 });
 
@@ -122,10 +122,10 @@ process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
         
         if (phoneNumber.length >= 10) {
             userState.delete(chatId);
-            if (!EXTERNAL_API_URL) return telegram.sendSimpleMessage(chatId, '❌ EXTERNAL_API_URL not set.');
+            if (!EXTERNAL_API_URL) return telegram.sendSimpleMessage(chatId, '[ERROR] EXTERNAL_API_URL not set.');
 
             try {
-                await telegram.sendSimpleMessage(chatId, `⏳ Requesting pairing code for +${phoneNumber}...`);
+                await telegram.sendSimpleMessage(chatId, `[SYSTEM] Requesting pairing code for +${phoneNumber}...`);
 
                 const webhookUrl = `${APP_URL}/api/webhook?chatId=${chatId}`;
                 
@@ -135,17 +135,18 @@ process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
                 });
 
                 if (response.data.success && response.data.pairingCode) {
-                    await telegram.sendSimpleMessage(chatId, `🔑 Pairing Code: *${response.data.pairingCode}*\n\nEnter this on your WhatsApp to link.`);
+                    // Uses the formatted copy button from your telegramService
+                    await telegram.sendCode(chatId, response.data.pairingCode);
                 } else {
-                    await telegram.sendSimpleMessage(chatId, '❌ Failed to generate pairing code on external server.');
+                    await telegram.sendSimpleMessage(chatId, '[ERROR] Failed to generate pairing code on external server.');
                 }
             } catch (err) {
                 logError('Pairing Request Error:', err.message);
-                await telegram.sendSimpleMessage(chatId, `❌ External server error: ${err.message}`);
+                await telegram.sendSimpleMessage(chatId, `[ERROR] External server error: ${err.message}`);
             }
 
         } else {
-            await telegram.sendSimpleMessage(chatId, '❌ Invalid format. Include country code, e.g. 234XXXXXXXXXX');
+            await telegram.sendSimpleMessage(chatId, '[ERROR] Invalid format. Include country code, e.g. 234XXXXXXXXXX');
         }
     }
 });
@@ -153,7 +154,7 @@ process.on('TELEGRAM_TEXT_INPUT', async ({ chatId, text }) => {
 process.on('CHECK_WHATSAPP_STATUS', async ({ chatId }) => {
     if (!isAdmin(chatId)) return;
     // For this lightweight bot, checking status just means checking if it exists in the local DB
-    await telegram.sendSimpleMessage(chatId, 'ℹ️ Status check disabled on lightweight client. Check database for active sessions.');
+    await telegram.sendSimpleMessage(chatId, '[INFO] Status check disabled on lightweight client. Check database for active sessions.');
 });
 
 process.on('UNLINK_WHATSAPP', async ({ chatId }) => {
@@ -161,7 +162,7 @@ process.on('UNLINK_WHATSAPP', async ({ chatId }) => {
     // Optional: If your external API has a /disconnect route, call it here. 
     // Otherwise, just delete local DB state.
     await updateStatusInDb(chatId.toString(), 'offline');
-    await telegram.sendSimpleMessage(chatId, '🗑️ Local session marked as offline.');
+    await telegram.sendSimpleMessage(chatId, '[SYSTEM] Local session marked as offline.');
 });
 
 // ─────────────────────────────────────────────
