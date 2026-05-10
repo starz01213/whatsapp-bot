@@ -255,18 +255,28 @@ module.exports = {
         }
     },
 
-    sendCode: async (chatId, code) => {
+        sendCode: async (chatId, code) => {
         debug(`sendCode -> ${chatId}: ${code}`);
         try {
             await bot.sendMessage(
                 chatId,
-                `*Your Pairing Code:*\n\n\`${code}\`\n\n_Enter this in WhatsApp -> Linked Devices -> Link with phone number._`,
-                { parse_mode: 'Markdown', ...afterCodeMenu }
+                `Pairing Code Generated\n\nCode: *${code}*\n\nTap the button below to copy the code, then open WhatsApp to link.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            // This button natively copies the text when tapped
+                            [{ text: `Copy Code: ${code}`, copy_text: { text: code } }],
+                            [{ text: "Try QR Code Instead", callback_data: "link_qr" }]
+                        ]
+                    }
+                }
             );
         } catch (err) {
             logError(`sendCode failed for ${chatId}:`, err.message);
         }
     },
+
 
     sendQR: async (chatId, imageBuffer) => {
         debug(`sendQR -> ${chatId} (${imageBuffer.length} bytes)`);
